@@ -1,0 +1,52 @@
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux BLE dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  test:
+    name: Test (${{ matrix.os }})
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+          - os: macos-latest
+            deps: ""
+          - os: windows-latest
+            deps: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install platform dependencies
+        if: matrix.deps != ''
+        run: ${{ matrix.deps }}
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        run: cargo test --verbose
