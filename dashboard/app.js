@@ -190,8 +190,12 @@ function connect() {
     status.className = 'text-xs px-6 py-1 text-green-500';
   };
 
+  let pendingRefresh = false;
   ws.onmessage = () => {
-    fetchLeaderboard();
+    if (!pendingRefresh) {
+      pendingRefresh = true;
+      setTimeout(() => { fetchLeaderboard(); pendingRefresh = false; }, 5000);
+    }
   };
 
   ws.onclose = () => {
