@@ -32,6 +32,17 @@ pub fn load() -> anyhow::Result<Option<AuthConfig>> {
     Ok(Some(config))
 }
 
+pub fn logout() -> anyhow::Result<()> {
+    let path = config_file();
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+        println!("  Logged out");
+    } else {
+        println!("  Not logged in");
+    }
+    Ok(())
+}
+
 pub fn save(config: &AuthConfig) -> anyhow::Result<()> {
     let dir = config_path();
     std::fs::create_dir_all(&dir)?;
