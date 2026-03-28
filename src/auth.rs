@@ -17,13 +17,12 @@ fn config_path() -> PathBuf {
         .join("walker")
 }
 
-fn config_file() -> PathBuf {
-    config_path().join("auth.json")
+fn config_file(dev: bool) -> PathBuf {
+    config_path().join(if dev { "auth_dev.json" } else { "auth.json" })
 }
 
-#[allow(dead_code)] // Will be used by walk command for authenticated requests.
-pub fn load() -> anyhow::Result<Option<AuthConfig>> {
-    let path = config_file();
+pub fn load(dev: bool) -> anyhow::Result<Option<AuthConfig>> {
+    let path = config_file(dev);
     if !path.exists() {
         return Ok(None);
     }
@@ -32,8 +31,8 @@ pub fn load() -> anyhow::Result<Option<AuthConfig>> {
     Ok(Some(config))
 }
 
-pub fn logout() -> anyhow::Result<()> {
-    let path = config_file();
+pub fn logout(dev: bool) -> anyhow::Result<()> {
+    let path = config_file(dev);
     if path.exists() {
         std::fs::remove_file(&path)?;
         println!("  Logged out");
@@ -43,10 +42,10 @@ pub fn logout() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn save(config: &AuthConfig) -> anyhow::Result<()> {
+pub fn save(config: &AuthConfig, dev: bool) -> anyhow::Result<()> {
     let dir = config_path();
     std::fs::create_dir_all(&dir)?;
-    let path = config_file();
+    let path = config_file(dev);
     let data = serde_json::to_string_pretty(config)?;
     std::fs::write(&path, data)?;
     info!(path = %path.display(), "Auth config saved");
@@ -75,7 +74,6 @@ struct UserInfo {
 pub async fn login(server: &str) -> anyhow::Result<AuthConfig> {
     let client = reqwest::Client::new();
 
-    // Step 1: Request a device code.
     let res: DeviceCodeResponse = client
         .post(format!("{server}/auth/device"))
         .send()
@@ -93,12 +91,10 @@ pub async fn login(server: &str) -> anyhow::Result<AuthConfig> {
     println!("  Your code: {}", res.user_code);
     println!();
 
-    // Try to open the browser.
     if open::that(&verify_url).is_ok() {
         info!("Opened browser");
     }
 
-    // Step 2: Poll for completion.
     println!("  Waiting for authorization...");
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -118,7 +114,7 @@ pub async fn login(server: &str) -> anyhow::Result<AuthConfig> {
                 email: user.email,
                 display_name: user.display_name.clone(),
             };
-            save(&config)?;
+            save(&config, false)?;
 
             println!();
             println!("  Logged in as {}", user.display_name);

@@ -17,7 +17,7 @@ pub struct ActivityTracker {
     moving: bool,
 }
 
-const IDLE_TIMEOUT_SECS: f64 = 2.5;
+const IDLE_TIMEOUT_SECS: f64 = 3.0;
 
 /// Snapshot of the current activity state for display/reporting.
 #[derive(Debug, Clone)]
