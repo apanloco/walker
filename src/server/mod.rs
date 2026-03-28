@@ -23,10 +23,45 @@ pub struct ServerConfig {
 }
 
 pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
+    // -- Startup checks --
+    info!("Starting Walker server...");
+    info!("  Base URL: {}", config.base_url);
+
+    let has_github = config.github_client_id.is_some() && config.github_client_secret.is_some();
+    let has_google = config.google_client_id.is_some() && config.google_client_secret.is_some();
+
+    if has_github {
+        info!("  GitHub OAuth: configured");
+    } else {
+        tracing::warn!(
+            "  GitHub OAuth: not configured (set WALKER_GITHUB_CLIENT_ID + WALKER_GITHUB_CLIENT_SECRET)"
+        );
+    }
+    if has_google {
+        info!("  Google OAuth: configured");
+    } else {
+        tracing::warn!(
+            "  Google OAuth: not configured (set WALKER_GOOGLE_CLIENT_ID + WALKER_GOOGLE_CLIENT_SECRET)"
+        );
+    }
+    if !has_github && !has_google && !config.dev {
+        tracing::warn!(
+            "  No login providers configured! Users won't be able to log in. Use --dev for testing."
+        );
+    }
+    if config.database_url.is_some() {
+        info!("  Database: configured");
+    } else {
+        tracing::warn!("  Database: not configured (set DATABASE_URL). Running in-memory only.");
+    }
+    if config.dev {
+        info!("  Dev mode: enabled");
+    }
+
     let token_map: live::TokenMap = Arc::new(RwLock::new(std::collections::HashMap::new()));
     let (broadcast_tx, _) = broadcast::channel(64);
 
-    // Connect to database if configured.
+    // Connect to database.
     let pool = if let Some(ref db_url) = config.database_url {
         let pool = db::connect(db_url).await?;
         let tokens = db::load_tokens(&pool).await?;
