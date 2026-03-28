@@ -56,6 +56,9 @@ enum Command {
         #[arg(short, long, default_value = "1")]
         count: u32,
     },
+    /// Remove saved login credentials
+    #[cfg(feature = "client")]
+    Logout,
     /// Authenticate with the walker server
     #[cfg(feature = "client")]
     Login {
@@ -114,6 +117,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Walk { timeout } => walk(timeout).await?,
         #[cfg(feature = "client")]
         Command::Simulate { speed, count } => simulate(speed, count).await?,
+        #[cfg(feature = "client")]
+        Command::Logout => {
+            auth::logout()?;
+        }
         #[cfg(feature = "client")]
         Command::Login { server, dev } => {
             let server = if dev { DEV_SERVER.to_string() } else { server };
