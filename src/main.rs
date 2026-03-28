@@ -14,8 +14,11 @@ mod reporter;
 mod server;
 
 use clap::{Parser, Subcommand};
+
+#[cfg(feature = "client")]
 use tracing::info;
 
+#[cfg(feature = "client")]
 const DEFAULT_SERVER: &str = "http://localhost:3000";
 
 #[derive(Parser)]
