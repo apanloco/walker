@@ -3,7 +3,7 @@ use btleplug::api::{Peripheral, WriteType};
 use tracing::info;
 use uuid::Uuid;
 
-use super::{FTMS_SERVICE_UUID, TreadmillData, TreadmillEvent, TreadmillProfile, TreadmillStatus};
+use super::{TreadmillData, TreadmillEvent, TreadmillProfile, TreadmillStatus};
 
 const UREVO_NOTIFY_UUID: Uuid = Uuid::from_u128(0x0000_fff1_0000_1000_8000_0080_5f9b_34fb);
 const UREVO_WRITE_UUID: Uuid = Uuid::from_u128(0x0000_fff2_0000_1000_8000_0080_5f9b_34fb);
@@ -31,10 +31,8 @@ impl TreadmillProfile for UrevoProfile {
         "UREVO"
     }
 
-    fn matches(&self, device_name: Option<&str>, service_uuids: &[Uuid]) -> bool {
-        if service_uuids.contains(&FTMS_SERVICE_UUID) {
-            return true;
-        }
+    fn matches(&self, device_name: Option<&str>, _service_uuids: &[Uuid]) -> bool {
+        // Only match by name prefix — FTMS UUID alone is too broad (matches bikes, rowers, etc.)
         if let Some(name) = device_name {
             let upper = name.to_uppercase();
             return NAME_PREFIXES.iter().any(|prefix| upper.starts_with(prefix));
