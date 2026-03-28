@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 /// FTMS (Fitness Machine Service) UUID — standard BLE service for treadmills.
+#[allow(dead_code)] // Will be used by future FTMS-based profiles.
 pub const FTMS_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_1826_0000_1000_8000_0080_5f9b_34fb);
 
 // -- Common types --
