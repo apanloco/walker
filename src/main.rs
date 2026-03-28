@@ -19,7 +19,9 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[cfg(feature = "client")]
-const DEFAULT_SERVER: &str = "http://localhost:3000";
+const DEFAULT_SERVER: &str = "https://walker.akerud.se";
+#[cfg(feature = "client")]
+const DEV_SERVER: &str = "http://localhost:3000";
 
 #[derive(Parser)]
 #[command(name = "walker", about = "Bluetooth walking machine tracker")]
@@ -114,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Simulate { speed, count } => simulate(speed, count).await?,
         #[cfg(feature = "client")]
         Command::Login { server, dev } => {
+            let server = if dev { DEV_SERVER.to_string() } else { server };
             if dev {
                 let config = auth::AuthConfig {
                     server,
