@@ -1,5 +1,6 @@
 #[cfg(feature = "client")]
 mod activity;
+#[cfg(feature = "client")]
 mod auth;
 #[cfg(feature = "client")]
 mod ble;
@@ -41,6 +42,7 @@ enum Command {
         timeout: u64,
     },
     /// Simulate a treadmill (no BLE needed)
+    #[cfg(feature = "client")]
     Simulate {
         /// Walking speed in mph
         #[arg(short, long, default_value = "2.5")]
@@ -50,6 +52,7 @@ enum Command {
         count: u32,
     },
     /// Authenticate with the walker server
+    #[cfg(feature = "client")]
     Login {
         /// Walker server URL
         #[arg(short, long, default_value = DEFAULT_SERVER)]
@@ -104,7 +107,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Enumerate { timeout } => enumerate(timeout).await?,
         #[cfg(feature = "client")]
         Command::Walk { timeout } => walk(timeout).await?,
+        #[cfg(feature = "client")]
         Command::Simulate { speed, count } => simulate(speed, count).await?,
+        #[cfg(feature = "client")]
         Command::Login { server, dev } => {
             if dev {
                 let config = auth::AuthConfig {
@@ -360,10 +365,12 @@ async fn walk(timeout: u64) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(feature = "client")]
 const SIM_NAMES: &[&str] = &[
     "alice", "bob", "charlie", "diana", "eve", "frank", "grace", "henry", "iris", "jack",
 ];
 
+#[cfg(feature = "client")]
 async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
     let config =
         auth::load()?.ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'walker login' first."))?;
