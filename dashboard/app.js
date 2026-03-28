@@ -181,7 +181,8 @@ function renderProfile(p) {
 // -- WebSocket + polling --
 
 function connect() {
-  const ws = new WebSocket('ws://' + location.host + '/ws/live');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/live');
   const status = document.getElementById('connection-status');
 
   ws.onopen = () => {
