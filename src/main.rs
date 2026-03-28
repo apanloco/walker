@@ -45,6 +45,9 @@ enum Command {
         /// Scan duration in seconds when searching for the device
         #[arg(short, long, default_value = "10")]
         timeout: u64,
+        /// Use dev credentials
+        #[arg(long)]
+        dev: bool,
     },
     /// Simulate a treadmill (no BLE needed)
     #[cfg(feature = "client")]
@@ -55,10 +58,17 @@ enum Command {
         /// Number of fake users to simulate
         #[arg(short, long, default_value = "1")]
         count: u32,
+        /// Use dev credentials
+        #[arg(long)]
+        dev: bool,
     },
     /// Remove saved login credentials
     #[cfg(feature = "client")]
-    Logout,
+    Logout {
+        /// Remove dev credentials instead of production
+        #[arg(long)]
+        dev: bool,
+    },
     /// Authenticate with the walker server
     #[cfg(feature = "client")]
     Login {
@@ -114,12 +124,12 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "client")]
         Command::Enumerate { timeout } => enumerate(timeout).await?,
         #[cfg(feature = "client")]
-        Command::Walk { timeout } => walk(timeout).await?,
+        Command::Walk { timeout, dev } => walk(timeout, dev).await?,
         #[cfg(feature = "client")]
-        Command::Simulate { speed, count } => simulate(speed, count).await?,
+        Command::Simulate { speed, count, dev } => simulate(speed, count, dev).await?,
         #[cfg(feature = "client")]
-        Command::Logout => {
-            auth::logout()?;
+        Command::Logout { dev } => {
+            auth::logout(dev)?;
         }
         #[cfg(feature = "client")]
         Command::Login { server, dev } => {
@@ -131,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
                     email: "dev@walker.local".to_string(),
                     display_name: "Dev User".to_string(),
                 };
-                auth::save(&config)?;
+                auth::save(&config, true)?;
                 println!("  Logged in as Dev User (dev mode)");
             } else {
                 auth::login(&server).await?;
@@ -240,7 +250,7 @@ async fn enumerate(timeout: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "client")]
-async fn walk(timeout: u64) -> anyhow::Result<()> {
+async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
     use btleplug::api::Peripheral;
     use colored::Colorize;
     use futures::stream::StreamExt;
@@ -253,7 +263,7 @@ async fn walk(timeout: u64) -> anyhow::Result<()> {
     let adapter = ble::get_adapter().await?;
 
     // Set up server reporter if logged in.
-    let mut server_reporter = match auth::load()? {
+    let mut server_reporter = match auth::load(dev)? {
         Some(config) => {
             info!(
                 server = %config.server,
@@ -384,9 +394,9 @@ const SIM_NAMES: &[&str] = &[
 ];
 
 #[cfg(feature = "client")]
-async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
-    let config =
-        auth::load()?.ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'walker login' first."))?;
+async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
+    let config = auth::load(dev)?
+        .ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'walker login' first."))?;
     let client = reqwest::Client::new();
     let server = config.server.clone();
 
