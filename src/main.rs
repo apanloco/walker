@@ -1,19 +1,19 @@
+#[cfg(feature = "client")]
 mod activity;
 mod auth;
+#[cfg(feature = "client")]
 mod ble;
+#[cfg(feature = "client")]
 mod device;
+#[cfg(feature = "client")]
 mod display;
+#[cfg(feature = "client")]
 mod reporter;
+#[cfg(feature = "server")]
 mod server;
 
-use btleplug::api::Peripheral;
 use clap::{Parser, Subcommand};
-use colored::Colorize;
-use futures::stream::StreamExt;
-use tracing::{error, info};
-
-use activity::ActivityTracker;
-use device::{StepTracker, TreadmillEvent, TreadmillStatus, default_registry};
+use tracing::info;
 
 const DEFAULT_SERVER: &str = "http://localhost:3000";
 
@@ -27,12 +27,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Scan for Bluetooth walking machine devices
+    #[cfg(feature = "client")]
     Enumerate {
         /// Scan duration in seconds
         #[arg(short, long, default_value = "10")]
         timeout: u64,
     },
     /// Connect to a walking machine and dump all data
+    #[cfg(feature = "client")]
     Walk {
         /// Scan duration in seconds when searching for the device
         #[arg(short, long, default_value = "10")]
@@ -57,6 +59,7 @@ enum Command {
         dev: bool,
     },
     /// Run the walker server
+    #[cfg(feature = "server")]
     Listen {
         /// Port to listen on
         #[arg(short, long, default_value = "3000")]
@@ -97,7 +100,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(feature = "client")]
         Command::Enumerate { timeout } => enumerate(timeout).await?,
+        #[cfg(feature = "client")]
         Command::Walk { timeout } => walk(timeout).await?,
         Command::Simulate { speed, count } => simulate(speed, count).await?,
         Command::Login { server, dev } => {
@@ -114,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
                 auth::login(&server).await?;
             }
         }
+        #[cfg(feature = "server")]
         Command::Listen {
             port,
             base_url,
@@ -141,7 +147,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "client")]
 async fn enumerate(timeout: u64) -> anyhow::Result<()> {
+    use btleplug::api::Peripheral;
+    use colored::Colorize;
+    use device::default_registry;
+
     let registry = default_registry();
     let adapter = ble::get_adapter().await?;
 
@@ -210,7 +221,16 @@ async fn enumerate(timeout: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "client")]
 async fn walk(timeout: u64) -> anyhow::Result<()> {
+    use btleplug::api::Peripheral;
+    use colored::Colorize;
+    use futures::stream::StreamExt;
+    use tracing::error;
+
+    use activity::ActivityTracker;
+    use device::{StepTracker, TreadmillEvent, TreadmillStatus, default_registry};
+
     let registry = default_registry();
     let adapter = ble::get_adapter().await?;
 
@@ -230,7 +250,6 @@ async fn walk(timeout: u64) -> anyhow::Result<()> {
         }
     };
 
-    // Step tracker and activity tracker survive reconnections.
     let mut step_tracker = StepTracker::new();
     let mut activity_tracker = ActivityTracker::new();
     let mut lines_since_header: u32 = 0;
@@ -291,7 +310,7 @@ async fn walk(timeout: u64) -> anyhow::Result<()> {
                 match tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await
                 {
                     Ok(Some(n)) => n,
-                    Ok(None) => break, // Stream ended cleanly.
+                    Ok(None) => break,
                     Err(_) => {
                         info!(
                             "{}",
@@ -351,7 +370,6 @@ async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let server = config.server.clone();
 
-    // If count == 1, use the logged-in user (no registration needed).
     if count <= 1 {
         let url = format!("{server}/api/update");
         let auth_header = format!("Bearer {}", config.token);
@@ -365,11 +383,10 @@ async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
                 .json(&serde_json::json!({"moving": true, "speed_mph": speed}))
                 .send()
                 .await;
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
 
-    // Multiple users: register fake users, then run them all.
     let mut tokens = Vec::new();
 
     for i in 0..count {
@@ -396,7 +413,6 @@ async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
 
     loop {
         for (name, token) in &tokens {
-            // Randomize speed a bit per user for variety.
             let user_speed = speed + (rand::RngExt::random_range(&mut rng, -10..=10) as f32 * 0.1);
             let user_speed = user_speed.max(0.5);
 
@@ -409,6 +425,6 @@ async fn simulate(speed: f32, count: u32) -> anyhow::Result<()> {
 
             tracing::debug!(name = %name, speed = %user_speed, "Sent update");
         }
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
