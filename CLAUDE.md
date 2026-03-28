@@ -59,7 +59,7 @@ Walker distinguishes between two data layers:
 
 `ActivityState` detection rules:
 - **Any step increase** → immediately **WALKING**
-- **No step increase for 2.5 seconds** → **IDLE**
+- **No step increase for 3 seconds** → **IDLE**
 
 `ActivityState` fields:
 - `moving: bool` — is the user currently walking?
@@ -345,15 +345,20 @@ Both are optional. The login page only shows buttons for configured providers.
 
 ### Token Storage
 
-Tokens are stored locally at `~/.config/walker/auth.json`:
+Credentials stored locally in `~/.config/walker/`:
+- `auth.json` — production (default, `https://walker.akerud.se`)
+- `auth_dev.json` — local dev (`http://localhost:3000`)
+
 ```json
 {
-  "server": "https://walker.example.com",
+  "server": "https://walker.akerud.se",
   "token": "...",
   "email": "daniel@gmail.com",
   "display_name": "daniel"
 }
 ```
+
+The `--dev` flag on `login`, `logout`, `walk`, and `simulate` switches between the two files.
 
 ### Supported Providers
 
@@ -385,10 +390,18 @@ Built with `clap` (derive API).
 ### `login`
 
 ```
-cargo run -- login --server http://localhost:3000
+cargo run -- login              # production (walker.akerud.se)
+cargo run -- login --dev        # local dev (localhost:3000, dev token)
 ```
 
-Authenticates the user via the walker server's device code flow. Opens a browser, waits for authorization, saves the token locally. Server URL defaults to a configurable value.
+Authenticates the user via the walker server's device code flow. Opens a browser, waits for authorization, saves the token locally. `--dev` saves to `auth_dev.json` with a hardcoded dev token.
+
+### `logout`
+
+```
+cargo run -- logout             # remove production credentials
+cargo run -- logout --dev       # remove dev credentials
+```
 
 ### `enumerate`
 
@@ -404,7 +417,7 @@ Scans for Bluetooth devices and lists them. Walking machine candidates are highl
 cargo run -- walk
 ```
 
-Scans for a walking machine, connects to it, monitors activity, and sends updates to the server. Displays live data locally. Auto-reconnects on disconnect, keeps scanning if no treadmill found. Press Ctrl+C to stop.
+Scans for a walking machine, connects to it, monitors activity, and sends updates to the server. Displays live data locally. Auto-reconnects on disconnect, keeps scanning if no treadmill found. Press Ctrl+C to stop. Use `--dev` to report to local server.
 
 Both `enumerate` and `walk` accept `--timeout <seconds>` (default: 10) to control scan duration.
 
@@ -487,15 +500,22 @@ cargo run -- walk                 # works offline or reports to dev server
 
 ### Deployment (Render.com)
 
+Production is deployed at `https://walker.akerud.se` via Render.com.
+
+Dockerfile builds server-only (`--no-default-features --features server`) — no BLE dependencies. Docker layer caching means only code changes trigger recompilation.
+
 Set environment variables in Render's dashboard:
 ```
-WALKER_BASE_URL=https://your-app.onrender.com
+WALKER_BASE_URL=https://walker.akerud.se
 WALKER_GITHUB_CLIENT_ID=...
 WALKER_GITHUB_CLIENT_SECRET=...
-DATABASE_URL=...  (provided by Render's managed Postgres)
+DATABASE_URL=...  (Render's internal Postgres URL)
 ```
 
-GitHub OAuth App callback URL must match: `https://your-app.onrender.com/auth/github/callback`
+GitHub OAuth App (production) callback URL: `https://walker.akerud.se/auth/github/callback`
+GitHub OAuth App (local dev) callback URL: `http://localhost:3000/auth/github/callback`
+
+Use separate GitHub OAuth Apps for production and local dev.
 
 ## BLE Resilience
 
@@ -538,8 +558,13 @@ All logging uses the `tracing` crate. Log levels:
 cargo build
 cargo run -- enumerate
 cargo run -- walk
-cargo run -- listen --dev
+cargo run -- walk --dev
+cargo run -- login
 cargo run -- login --dev
+cargo run -- logout
+cargo run -- simulate
+cargo run -- simulate --dev --count 5
+cargo run -- listen --dev
 ```
 
 ## References
