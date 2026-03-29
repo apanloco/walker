@@ -87,6 +87,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         if let Some(ref pool) = pool {
             db::upsert_user(pool, dev_email, dev_name, None).await?;
             let _ = db::store_token(pool, dev_token, dev_email).await;
+            db::seed_dev_history(pool, dev_email).await?;
         }
 
         token_map.write().await.insert(

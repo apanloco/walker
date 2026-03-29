@@ -112,6 +112,54 @@ pub async fn accumulate_daily_stats(
 }
 
 /// Profile data: last 30 days of daily stats for a user.
+/// Seed fake historical data for dev mode.
+pub async fn seed_dev_history(pool: &PgPool, email: &str) -> anyhow::Result<()> {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+
+    // Check if already seeded.
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM daily_stats WHERE user_email = $1")
+        .bind(email)
+        .fetch_one(pool)
+        .await?;
+    if count.0 > 5 {
+        return Ok(()); // Already has data.
+    }
+
+    info!("Seeding dev history for {email}...");
+
+    for days_ago in 1..365 {
+        // ~70% chance of walking on any given day.
+        if rng.random_range(0..100) > 70 {
+            continue;
+        }
+
+        let active_secs: i32 = rng.random_range(600..7200); // 10 min to 2 hours
+        let speed_kmh: f64 = 2.0 + rng.random_range(0..30) as f64 * 0.1; // 2.0–5.0 km/h
+        let distance_m = speed_kmh * 1000.0 / 3600.0 * active_secs as f64;
+        let met = 2.0 + (speed_kmh - 2.0) * 0.5;
+        let calories_ucal = (met * 70.0 * 1_000_000.0 / 3600.0 * active_secs as f64) as i64;
+        let idle_secs: i32 = rng.random_range(0..600);
+
+        sqlx::query(
+            "INSERT INTO daily_stats (user_email, date, calories_ucal, distance_m, active_secs, idle_secs, updated_at)
+             VALUES ($1, CURRENT_DATE - ($2 || ' days')::INTERVAL, $3, $4, $5, $6, NOW())
+             ON CONFLICT (user_email, date) DO NOTHING",
+        )
+        .bind(email)
+        .bind(days_ago)
+        .bind(calories_ucal)
+        .bind(distance_m as f32)
+        .bind(active_secs)
+        .bind(idle_secs)
+        .execute(pool)
+        .await?;
+    }
+
+    info!("Seeded dev history for {email}");
+    Ok(())
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct DailySnapshot {
     pub date: String,
