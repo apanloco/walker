@@ -127,7 +127,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .merge(live::routes().with_state(live_ctx.clone()))
         .merge(leaderboard::routes().with_state(live_ctx.clone()))
         .merge(profile::routes().with_state(live_ctx))
-        .merge(dashboard::routes());
+        .merge(dashboard::routes(config.dev));
 
     let addr = format!("0.0.0.0:{}", config.port);
     info!("Walker server listening on http://{addr}");

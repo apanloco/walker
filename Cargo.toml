@@ -30,7 +30,7 @@ async-trait = { version = "0.1.89", optional = true }
 
 # Server-only (HTTP server, DB, auth)
 axum = { version = "0.8.8", features = ["json", "ws"], optional = true }
-tower-http = { version = "0.6.8", features = ["cors"], optional = true }
+tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate"], optional = true }
 
 # Shared
