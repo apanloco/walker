@@ -3,7 +3,7 @@ use std::time::Instant;
 /// Inferred activity state — the truth about whether the user is actually walking.
 /// Rules:
 /// - Any step increase → immediately WALKING
-/// - No step increase for 5 seconds → IDLE
+/// - No step increase for 3 seconds → IDLE
 pub struct ActivityTracker {
     last_step_total: u64,
     last_step_time: Option<Instant>,
