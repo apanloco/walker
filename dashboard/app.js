@@ -126,7 +126,9 @@ function buildHeatmap(days) {
     if (d.calories_kcal > maxCal) maxCal = d.calories_kcal;
   });
 
-  const colors = ['bg-gray-700/50', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
+  const colors = ['bg-gray-600', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
+  const goldColor = 'bg-amber-400';
+  const goldThresholdKm = 8.0; // ~10,000 steps — research-backed daily goal.
 
   // Generate exactly 53 weeks of dates ending this week.
   const today = new Date();
@@ -172,7 +174,8 @@ function buildHeatmap(days) {
       ? dateStr + ': ' + data.calories_kcal.toFixed(1) + ' kcal, ' + data.distance_km.toFixed(2) + ' km'
       : dateStr + ': no activity';
 
-    const color = colors[level];
+    const isGold = data && data.distance_km >= goldThresholdKm;
+    const color = isGold ? goldColor : colors[level];
     cells.push({ dateStr, level, color, tooltip, day: d.getDay() });
 
     d.setDate(d.getDate() + 1);
@@ -185,14 +188,17 @@ function buildHeatmap(days) {
   }
   let html = '<div class="overflow-x-auto">';
 
-  // Month labels.
-  html += '<div class="flex gap-[3px] mb-1 ml-8 text-[10px] text-gray-500">';
-  let prevWeek = -1;
+  // Month labels — position each label at the correct week column.
+  const totalWeeks = weeks.length;
+  const cellSize = 13; // 10px square + 3px gap
+  html += '<div class="relative mb-1 ml-8 text-[10px] text-gray-500" style="height: 14px; width: ' + (totalWeeks * cellSize) + 'px">';
+  let lastLabelX = -50;
   months.forEach(m => {
-    const gap = m.week - prevWeek - 1;
-    if (gap > 0) html += '<div style="width: ' + (gap * 13) + 'px"></div>';
-    html += '<div>' + m.name + '</div>';
-    prevWeek = m.week;
+    const x = m.week * cellSize;
+    if (m.week < totalWeeks && x - lastLabelX >= 30) {
+      html += '<div class="absolute" style="left: ' + x + 'px">' + m.name + '</div>';
+      lastLabelX = x;
+    }
   });
   html += '</div>';
 
@@ -221,6 +227,9 @@ function buildHeatmap(days) {
     html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + c + '"></div>';
   });
   html += '<span>More</span>';
+  html += '<span class="ml-3">&#127942;</span>';
+  html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + goldColor + '"></div>';
+  html += '<span>8+ km</span>';
   html += '</div>';
 
   html += '</div>';
