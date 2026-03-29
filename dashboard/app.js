@@ -126,24 +126,41 @@ function buildHeatmap(days) {
     if (d.calories_kcal > maxCal) maxCal = d.calories_kcal;
   });
 
-  // Generate 52 weeks of dates ending today.
+  const colors = ['bg-gray-700/50', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
+
+  // Generate exactly 53 weeks of dates ending this week.
   const today = new Date();
+  const todayStr = today.getFullYear() + '-' +
+    String(today.getMonth() + 1).padStart(2, '0') + '-' +
+    String(today.getDate()).padStart(2, '0');
+
   const cells = [];
-  const startDate = new Date(today);
-  startDate.setDate(startDate.getDate() - 363); // ~52 weeks back
-  // Align to Sunday.
-  startDate.setDate(startDate.getDate() - startDate.getDay());
+
+  // Start 53 weeks ago, aligned to Monday.
+  const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayOfWeek = startDate.getDay();
+  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 0 offset
+  startDate.setDate(startDate.getDate() - (52 * 7) - mondayOffset);
 
   const months = [];
   let lastMonth = -1;
 
+  // Generate all days from startDate to end of this week.
+  const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  // End on Sunday (end of Monday-based week).
+  const endDow = endDate.getDay();
+  const sundayOffset = endDow === 0 ? 0 : 7 - endDow;
+  endDate.setDate(endDate.getDate() + sundayOffset);
+
   const d = new Date(startDate);
-  while (d <= today) {
-    const dateStr = d.toISOString().slice(0, 10);
+  while (d <= endDate) {
+    const dateStr = d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+    const isFuture = dateStr > todayStr;
     const data = dataMap[dateStr];
     const cal = data ? data.calories_kcal : 0;
 
-    // Intensity: 0-4 levels.
     let level = 0;
     if (cal > 0 && maxCal > 0) {
       const ratio = cal / maxCal;
@@ -153,21 +170,18 @@ function buildHeatmap(days) {
       else level = 1;
     }
 
-    const colors = ['bg-gray-800', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
-    const weekNum = cells.length > 0 ? Math.floor((cells.length) / 7) : 0;
-
-    // Track month labels.
     const month = d.getMonth();
     if (month !== lastMonth) {
       months.push({ week: Math.floor(cells.length / 7), name: d.toLocaleString('default', { month: 'short' }) });
       lastMonth = month;
     }
 
-    const tooltip = data
+    const tooltip = isFuture ? '' : (data
       ? dateStr + ': ' + data.calories_kcal.toFixed(1) + ' kcal, ' + data.distance_km.toFixed(2) + ' km'
-      : dateStr + ': no activity';
+      : dateStr + ': no activity');
 
-    cells.push({ dateStr, level, color: colors[level], tooltip, day: d.getDay() });
+    const color = isFuture ? 'bg-transparent' : colors[level];
+    cells.push({ dateStr, level, color, tooltip, day: d.getDay() });
 
     d.setDate(d.getDate() + 1);
   }
@@ -177,7 +191,6 @@ function buildHeatmap(days) {
   for (let i = 0; i < cells.length; i += 7) {
     weeks.push(cells.slice(i, i + 7));
   }
-
   let html = '<div class="overflow-x-auto">';
 
   // Month labels.
@@ -192,7 +205,7 @@ function buildHeatmap(days) {
   html += '</div>';
 
   // Grid.
-  const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+  const dayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
   html += '<div class="flex gap-[3px]">';
   html += '<div class="flex flex-col gap-[3px] mr-1">';
   dayLabels.forEach(l => {
@@ -212,7 +225,7 @@ function buildHeatmap(days) {
   // Legend.
   html += '<div class="flex items-center gap-1 mt-3 text-[10px] text-gray-500 ml-8">';
   html += '<span>Less</span>';
-  ['bg-gray-800', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'].forEach(c => {
+  colors.forEach(c => {
     html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + c + '"></div>';
   });
   html += '<span>More</span>';
