@@ -112,7 +112,7 @@ pub async fn accumulate_daily_stats(
 }
 
 /// Profile data: last 30 days of daily stats for a user.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct DailySnapshot {
     pub date: String,
     pub calories_kcal: f64,
