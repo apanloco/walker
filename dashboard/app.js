@@ -193,7 +193,7 @@ function buildHeatmap(days) {
   const sq = 14; // square size in px
   const gap = 3;
   const cellSize = sq + gap;
-  html += '<div class="relative mb-1 ml-9 text-[11px] text-gray-500" style="height: 16px; width: ' + (totalWeeks * cellSize) + 'px">';
+  html += '<div class="relative mb-1 text-[11px] text-gray-500" style="height: 16px; margin-left: ' + (28 + gap) + 'px; width: ' + (totalWeeks * cellSize) + 'px">';
   let lastLabelX = -50;
   months.forEach(m => {
     const x = m.week * cellSize;
@@ -204,20 +204,21 @@ function buildHeatmap(days) {
   });
   html += '</div>';
 
-  // Grid.
+  // Grid — CSS grid for uniform spacing.
   const dayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
-  html += '<div class="flex gap-[' + gap + 'px]">';
-  html += '<div class="flex flex-col gap-[' + gap + 'px] mr-1">';
-  dayLabels.forEach(l => {
-    html += '<div class="w-7 text-[11px] text-gray-500" style="height:' + sq + 'px;line-height:' + sq + 'px">' + l + '</div>';
-  });
-  html += '</div>';
+  const cols = weeks.length + 1; // +1 for day labels column
+  html += '<div style="display:grid; grid-template-columns: 28px repeat(' + weeks.length + ', ' + sq + 'px); grid-template-rows: repeat(7, ' + sq + 'px); gap: ' + gap + 'px">';
 
-  weeks.forEach(week => {
-    html += '<div class="flex flex-col gap-[' + gap + 'px]">';
-    week.forEach(cell => {
+  // Day labels in first column.
+  dayLabels.forEach((l, row) => {
+    html += '<div class="text-[11px] text-gray-500 flex items-center" style="grid-column:1; grid-row:' + (row+1) + '">' + l + '</div>';
+  });
+
+  // Week columns.
+  weeks.forEach((week, col) => {
+    week.forEach((cell, row) => {
       const tooltipHtml = cell.tooltip ? cell.tooltip.replace(': ', '<br>').replace(', ', '<br>') : '';
-      html += '<div class="hm-cell relative group rounded-sm ' + cell.color + '" style="width:' + sq + 'px;height:' + sq + 'px">';
+      html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
       if (tooltipHtml) {
         html += '<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl whitespace-nowrap z-20">';
         html += tooltipHtml;
@@ -226,12 +227,11 @@ function buildHeatmap(days) {
       }
       html += '</div>';
     });
-    html += '</div>';
   });
   html += '</div>';
 
   // Legend.
-  html += '<div class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-500 ml-9">';
+  html += '<div class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-500" style="margin-left: ' + (28 + gap) + 'px">';
   html += '<span>Less</span>';
   colors.forEach(c => {
     html += '<div class="rounded-sm ' + c + '" style="width:' + sq + 'px;height:' + sq + 'px"></div>';
