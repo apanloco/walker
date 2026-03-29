@@ -223,17 +223,18 @@ function buildHeatmap(days) {
         return;
       }
       const data = dataMap[cell.dateStr];
+      const food = data ? buildFoodEquiv(data.calories_kcal, false) : '';
       const tooltipLines = cell.tooltip.replace(': ', '<br>').replace(', ', '<br>');
       const showBelow = row < 3;
       const posY = showBelow ? 'top-full mt-2' : 'bottom-full mb-2';
-      // Shift tooltip left when near right edge of grid.
       const nearRight = col > totalWeeks - 12;
       const nearLeft = col < 6;
       const posX = nearRight ? 'right-0' : nearLeft ? 'left-0' : 'left-1/2 -translate-x-1/2';
 
       html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
-      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl whitespace-nowrap z-20">';
+      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20" style="max-width: 200px; white-space: normal;">';
       html += tooltipLines;
+      if (food) html += '<div class="mt-1 text-base flex flex-wrap">' + food + '</div>';
       html += '</div>';
       html += '</div>';
     });
