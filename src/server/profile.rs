@@ -7,6 +7,32 @@ use axum::{
 use super::db;
 use super::live::SharedLive;
 
+fn chrono_today() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let days = now / 86400;
+    // Simple date calculation (accurate enough).
+    let (y, m, d) = days_to_ymd(days);
+    format!("{y}-{m:02}-{d:02}")
+}
+
+fn days_to_ymd(days_since_epoch: u64) -> (u64, u64, u64) {
+    // Adapted from Howard Hinnant's algorithm.
+    let z = days_since_epoch + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 pub fn routes() -> Router<SharedLive> {
     Router::new().route("/api/profile/{id}", get(get_profile))
 }
@@ -43,27 +69,42 @@ async fn get_profile(
         .unwrap_or_default();
     let streak = db::user_streak(pool, &email).await.unwrap_or(0);
 
-    // Compute totals and records.
-    let total_calories: f64 = year_history.iter().map(|d| d.calories_kcal).sum();
-    let total_distance: f64 = year_history.iter().map(|d| d.distance_km).sum();
-    let total_active: i32 = year_history.iter().map(|d| d.active_secs).sum();
-    let total_days = year_history.len();
-    let best_day_calories = year_history
+    // All-time totals (could be longer than 365 days).
+    let all_time = db::user_history(pool, &email, 99999)
+        .await
+        .unwrap_or_default();
+    let total_calories: f64 = all_time.iter().map(|d| d.calories_kcal).sum();
+    let total_distance: f64 = all_time.iter().map(|d| d.distance_km).sum();
+    let total_active: i32 = all_time.iter().map(|d| d.active_secs).sum();
+    let total_days = all_time.len();
+
+    // Records.
+    let best_day_calories = all_time
         .iter()
         .map(|d| d.calories_kcal)
         .fold(0.0f64, f64::max);
-    let best_day_distance = year_history
+    let best_day_distance = all_time
         .iter()
         .map(|d| d.distance_km)
         .fold(0.0f64, f64::max);
-    let best_day_active = year_history
-        .iter()
-        .map(|d| d.active_secs)
-        .max()
-        .unwrap_or(0);
+    let best_day_active = all_time.iter().map(|d| d.active_secs).max().unwrap_or(0);
 
-    // Last 7 days for the weekly breakdown.
+    // Period calories for "you burned" section.
+    let today_str = chrono_today();
+    let today_cal: f64 = all_time
+        .iter()
+        .filter(|d| d.date == today_str)
+        .map(|d| d.calories_kcal)
+        .sum();
     let last_7: Vec<_> = year_history.iter().rev().take(7).rev().cloned().collect();
+    let week_cal: f64 = last_7.iter().map(|d| d.calories_kcal).sum();
+    let month_cal: f64 = year_history
+        .iter()
+        .rev()
+        .take(30)
+        .map(|d| d.calories_kcal)
+        .sum();
+    let year_cal: f64 = year_history.iter().map(|d| d.calories_kcal).sum();
 
     // Check if currently walking.
     let live_status = {
@@ -88,6 +129,13 @@ async fn get_profile(
             "distance_km": total_distance,
             "active_secs": total_active,
             "active_days": total_days,
+        },
+        "periods": {
+            "today_kcal": today_cal,
+            "week_kcal": week_cal,
+            "month_kcal": month_cal,
+            "year_kcal": year_cal,
+            "all_time_kcal": total_calories,
         },
         "records": {
             "best_day_calories_kcal": best_day_calories,

@@ -246,8 +246,51 @@ function buildHeatmap(days) {
   return html;
 }
 
+// Sorted largest to smallest — greedy "coin change" algorithm.
+const foodItems = [
+  { emoji: '🍔', name: 'Big Mac', kcal: 550 },
+  { emoji: '🧁', name: 'Kanelbulle', kcal: 350 },
+  { emoji: '🍕', name: 'Pizza slice', kcal: 285 },
+  { emoji: '🍫', name: 'Snickers bar', kcal: 250 },
+  { emoji: '🍺', name: 'Beer 50cl', kcal: 215 },
+  { emoji: '🥤', name: 'Coca-Cola 33cl', kcal: 139 },
+  { emoji: '🍪', name: 'Oreo cookie', kcal: 53 },
+  { emoji: '🍬', name: 'Marshmallow', kcal: 23 },
+];
+
+function buildFoodEquiv(kcal) {
+  if (kcal <= 0) return '';
+  let remaining = kcal;
+  let html = '';
+  for (const f of foodItems) {
+    const count = Math.floor(remaining / f.kcal);
+    if (count > 0) {
+      remaining -= count * f.kcal;
+      for (let i = 0; i < count; i++) {
+        html += '<span class="cursor-default inline-block hover:scale-125 transition-transform" title="' + f.name + ' (' + f.kcal + ' kcal)">' + f.emoji + '</span>';
+      }
+    }
+  }
+  return html;
+}
+
+function buildFoodRow(label, kcal) {
+  if (kcal <= 0) return '';
+  const equiv = buildFoodEquiv(kcal);
+  return '<div class="py-3 border-t border-gray-800/50">' +
+    '<div class="flex items-center justify-between mb-1">' +
+      '<div class="text-xs text-gray-500">' + label + '</div>' +
+      '<div class="text-xs text-gray-600">' + kcal.toFixed(0) + ' kcal</div>' +
+    '</div>' +
+    '<div class="text-xl leading-relaxed flex flex-wrap">' + equiv + '</div>' +
+  '</div>';
+}
+
 function renderProfile(p) {
   const el = document.getElementById('profile-content');
+
+  const last7 = p.last_7_days || [];
+  const periods = p.periods || {};
 
   // Live status badge.
   let liveBadge = '';
@@ -258,7 +301,6 @@ function renderProfile(p) {
   }
 
   // Weekly bars.
-  const last7 = p.last_7_days || [];
   const maxWeekCal = Math.max(...last7.map(d => d.calories_kcal), 0.1);
   const weekBars = last7.map(d => {
     const pct = Math.max((d.calories_kcal / maxWeekCal) * 100, 3);
@@ -320,6 +362,16 @@ function renderProfile(p) {
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (time)</div>
         <div class="text-2xl font-bold text-white">${formatDuration(p.records.best_day_active_secs)}</div>
       </div>
+    </div>
+
+    <!-- You Burned -->
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">You Burned</h3>
+      ${buildFoodRow('Today', periods.today_kcal || 0)}
+      ${buildFoodRow('This Week', periods.week_kcal || 0)}
+      ${buildFoodRow('This Month', periods.month_kcal || 0)}
+      ${buildFoodRow('This Year', periods.year_kcal || 0)}
+      ${buildFoodRow('All Time', periods.all_time_kcal || 0)}
     </div>
 
     <!-- Heatmap -->
