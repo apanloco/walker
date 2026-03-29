@@ -89,11 +89,10 @@ function fetchLeaderboard() {
     .catch(() => {});
 }
 
-// -- Profile (Me page) --
+// -- Profile --
 
 function showProfile(id) {
   currentProfileId = id;
-  fetchProfile();
   showTab('profile');
 }
 
@@ -116,65 +115,200 @@ function fetchProfile() {
     .catch(() => {});
 }
 
+function buildHeatmap(days) {
+  // Build a map of date → calories for quick lookup.
+  const dataMap = {};
+  let maxCal = 0;
+  days.forEach(d => {
+    dataMap[d.date] = d;
+    if (d.calories_kcal > maxCal) maxCal = d.calories_kcal;
+  });
+
+  // Generate 52 weeks of dates ending today.
+  const today = new Date();
+  const cells = [];
+  const startDate = new Date(today);
+  startDate.setDate(startDate.getDate() - 363); // ~52 weeks back
+  // Align to Sunday.
+  startDate.setDate(startDate.getDate() - startDate.getDay());
+
+  const months = [];
+  let lastMonth = -1;
+
+  const d = new Date(startDate);
+  while (d <= today) {
+    const dateStr = d.toISOString().slice(0, 10);
+    const data = dataMap[dateStr];
+    const cal = data ? data.calories_kcal : 0;
+
+    // Intensity: 0-4 levels.
+    let level = 0;
+    if (cal > 0 && maxCal > 0) {
+      const ratio = cal / maxCal;
+      if (ratio > 0.75) level = 4;
+      else if (ratio > 0.5) level = 3;
+      else if (ratio > 0.25) level = 2;
+      else level = 1;
+    }
+
+    const colors = ['bg-gray-800', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
+    const weekNum = cells.length > 0 ? Math.floor((cells.length) / 7) : 0;
+
+    // Track month labels.
+    const month = d.getMonth();
+    if (month !== lastMonth) {
+      months.push({ week: Math.floor(cells.length / 7), name: d.toLocaleString('default', { month: 'short' }) });
+      lastMonth = month;
+    }
+
+    const tooltip = data
+      ? dateStr + ': ' + data.calories_kcal.toFixed(1) + ' kcal, ' + data.distance_km.toFixed(2) + ' km'
+      : dateStr + ': no activity';
+
+    cells.push({ dateStr, level, color: colors[level], tooltip, day: d.getDay() });
+
+    d.setDate(d.getDate() + 1);
+  }
+
+  // Build grid: 7 rows (days) × ~53 columns (weeks).
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    weeks.push(cells.slice(i, i + 7));
+  }
+
+  let html = '<div class="overflow-x-auto">';
+
+  // Month labels.
+  html += '<div class="flex gap-[3px] mb-1 ml-8 text-[10px] text-gray-500">';
+  let prevWeek = -1;
+  months.forEach(m => {
+    const gap = m.week - prevWeek - 1;
+    if (gap > 0) html += '<div style="width: ' + (gap * 13) + 'px"></div>';
+    html += '<div>' + m.name + '</div>';
+    prevWeek = m.week;
+  });
+  html += '</div>';
+
+  // Grid.
+  const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+  html += '<div class="flex gap-[3px]">';
+  html += '<div class="flex flex-col gap-[3px] mr-1">';
+  dayLabels.forEach(l => {
+    html += '<div class="w-5 h-[10px] text-[10px] text-gray-500 leading-[10px]">' + l + '</div>';
+  });
+  html += '</div>';
+
+  weeks.forEach(week => {
+    html += '<div class="flex flex-col gap-[3px]">';
+    week.forEach(cell => {
+      html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + cell.color + ' cursor-default" title="' + cell.tooltip + '"></div>';
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Legend.
+  html += '<div class="flex items-center gap-1 mt-3 text-[10px] text-gray-500 ml-8">';
+  html += '<span>Less</span>';
+  ['bg-gray-800', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'].forEach(c => {
+    html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + c + '"></div>';
+  });
+  html += '<span>More</span>';
+  html += '</div>';
+
+  html += '</div>';
+  return html;
+}
+
 function renderProfile(p) {
   const el = document.getElementById('profile-content');
-  const days = p.last_30_days.days || [];
-  const maxCal = Math.max(...days.map(d => d.calories_kcal), 0.1);
 
-  const bars = days.map(d => {
-    const pct = Math.max((d.calories_kcal / maxCal) * 100, 2);
-    return `
-      <div class="group relative flex-1 flex flex-col justify-end" style="height: 140px">
-        <div class="bg-walker-500 hover:bg-walker-600 rounded-t transition-all duration-200 min-h-[2px]" style="height: ${pct}%"></div>
-        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg whitespace-nowrap z-10">
-          <div class="font-medium">${d.date}</div>
-          <div class="text-gray-400">${d.calories_kcal.toFixed(1)} kcal</div>
-          <div class="text-gray-400">${d.distance_km.toFixed(2)} km</div>
-        </div>
-      </div>`;
+  // Live status badge.
+  let liveBadge = '';
+  if (p.live && p.live.status === 'walking') {
+    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400 text-sm font-medium">Walking at ' + p.live.speed_mph.toFixed(1) + ' mph</span></div>';
+  } else if (p.live && p.live.status === 'idle') {
+    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500"></span><span class="text-yellow-500 text-sm">Idle</span></div>';
+  }
+
+  // Weekly bars.
+  const last7 = p.last_7_days || [];
+  const maxWeekCal = Math.max(...last7.map(d => d.calories_kcal), 0.1);
+  const weekBars = last7.map(d => {
+    const pct = Math.max((d.calories_kcal / maxWeekCal) * 100, 3);
+    const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
+    return '<div class="flex items-center gap-2">' +
+      '<div class="w-8 text-right text-[11px] text-gray-500">' + dayName + '</div>' +
+      '<div class="flex-1 h-5 bg-gray-800 rounded-full overflow-hidden">' +
+        '<div class="h-full bg-walker-500 rounded-full transition-all" style="width:' + pct + '%"></div>' +
+      '</div>' +
+      '<div class="w-16 text-right text-xs text-gray-400">' + d.calories_kcal.toFixed(1) + ' kcal</div>' +
+    '</div>';
   }).join('');
 
-  const emptyDays = 30 - days.length;
-  const emptyBars = Array(emptyDays).fill(
-    '<div class="flex-1" style="height: 140px"></div>'
-  ).join('');
-
   el.innerHTML = `
-    <!-- Header -->
-    <div class="flex items-center gap-4 mb-6">
+    <!-- Hero -->
+    <div class="flex items-start gap-5 mb-8">
       ${p.avatar_url
-        ? '<img class="w-16 h-16 rounded-full ring-2 ring-walker-500/30" src="' + p.avatar_url + '" alt="">'
-        : '<div class="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center text-2xl font-bold text-gray-400">' + p.name[0].toUpperCase() + '</div>'
+        ? '<img class="w-20 h-20 rounded-full ring-4 ring-walker-500/20" src="' + p.avatar_url + '" alt="">'
+        : '<div class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center text-3xl font-bold text-gray-400 ring-4 ring-walker-500/20">' + p.name[0].toUpperCase() + '</div>'
       }
       <div>
-        <div class="text-2xl font-bold text-white">${p.name}</div>
-        ${p.streak > 0 ? '<div class="text-yellow-400 text-sm font-medium mt-0.5">' + p.streak + ' day streak</div>' : ''}
+        <div class="text-3xl font-extrabold text-white">${p.name}</div>
+        ${p.streak > 0 ? '<div class="flex items-center gap-1.5 mt-1"><span class="text-amber-400 text-lg">&#128293;</span><span class="text-amber-400 font-bold text-lg">' + p.streak + '</span><span class="text-amber-400/70 text-sm">day streak</span></div>' : ''}
+        ${liveBadge}
       </div>
     </div>
 
-    <!-- Stats cards -->
-    <div class="grid grid-cols-3 gap-3 mb-6">
-      <div class="bg-surface-800 rounded-xl p-4">
-        <div class="text-3xl font-extrabold text-white">${p.last_30_days.total_calories_kcal.toFixed(1)}</div>
-        <div class="text-xs text-gray-500 mt-1">kcal (30 days)</div>
+    <!-- Stats grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+      <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
+        <div class="text-3xl font-extrabold text-white">${p.totals.calories_kcal.toFixed(1)}</div>
+        <div class="text-xs text-gray-500 mt-1">Total kcal</div>
       </div>
-      <div class="bg-surface-800 rounded-xl p-4">
-        <div class="text-3xl font-extrabold text-white">${p.last_30_days.total_distance_km.toFixed(2)}</div>
-        <div class="text-xs text-gray-500 mt-1">km (30 days)</div>
+      <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
+        <div class="text-3xl font-extrabold text-white">${p.totals.distance_km.toFixed(2)}</div>
+        <div class="text-xs text-gray-500 mt-1">Total km</div>
       </div>
-      <div class="bg-surface-800 rounded-xl p-4">
-        <div class="text-3xl font-extrabold text-white">${formatDuration(p.last_30_days.total_active_secs)}</div>
-        <div class="text-xs text-gray-500 mt-1">active (30 days)</div>
+      <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
+        <div class="text-3xl font-extrabold text-white">${formatDuration(p.totals.active_secs)}</div>
+        <div class="text-xs text-gray-500 mt-1">Total active time</div>
+      </div>
+      <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
+        <div class="text-3xl font-extrabold text-white">${p.totals.active_days}</div>
+        <div class="text-xs text-gray-500 mt-1">Active days</div>
       </div>
     </div>
 
-    <!-- Chart -->
-    <div class="bg-surface-800 rounded-xl p-5">
-      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Last 30 Days</h3>
-      <div class="flex items-end gap-[2px]">
-        ${emptyBars}${bars}
+    <!-- Personal records -->
+    <div class="grid grid-cols-3 gap-3 mb-8">
+      <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
+        <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (kcal)</div>
+        <div class="text-2xl font-bold text-white">${p.records.best_day_calories_kcal.toFixed(1)}</div>
+      </div>
+      <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
+        <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (km)</div>
+        <div class="text-2xl font-bold text-white">${p.records.best_day_distance_km.toFixed(2)}</div>
+      </div>
+      <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
+        <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (time)</div>
+        <div class="text-2xl font-bold text-white">${formatDuration(p.records.best_day_active_secs)}</div>
       </div>
     </div>
+
+    <!-- Heatmap -->
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Walking Activity</h3>
+      ${buildHeatmap(p.heatmap)}
+    </div>
+
+    <!-- Last 7 days -->
+    ${last7.length > 0 ? `
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Last 7 Days</h3>
+      <div class="space-y-2">${weekBars}</div>
+    </div>
+    ` : ''}
   `;
 }
 
