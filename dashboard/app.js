@@ -190,8 +190,10 @@ function buildHeatmap(days) {
 
   // Month labels — position each label at the correct week column.
   const totalWeeks = weeks.length;
-  const cellSize = 13; // 10px square + 3px gap
-  html += '<div class="relative mb-1 ml-8 text-[10px] text-gray-500" style="height: 14px; width: ' + (totalWeeks * cellSize) + 'px">';
+  const sq = 14; // square size in px
+  const gap = 3;
+  const cellSize = sq + gap;
+  html += '<div class="relative mb-1 ml-9 text-[11px] text-gray-500" style="height: 16px; width: ' + (totalWeeks * cellSize) + 'px">';
   let lastLabelX = -50;
   months.forEach(m => {
     const x = m.week * cellSize;
@@ -204,27 +206,35 @@ function buildHeatmap(days) {
 
   // Grid.
   const dayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
-  html += '<div class="flex gap-[3px]">';
-  html += '<div class="flex flex-col gap-[3px] mr-1">';
+  html += '<div class="flex gap-[' + gap + 'px]">';
+  html += '<div class="flex flex-col gap-[' + gap + 'px] mr-1">';
   dayLabels.forEach(l => {
-    html += '<div class="w-5 h-[10px] text-[10px] text-gray-500 leading-[10px]">' + l + '</div>';
+    html += '<div class="w-7 text-[11px] text-gray-500" style="height:' + sq + 'px;line-height:' + sq + 'px">' + l + '</div>';
   });
   html += '</div>';
 
   weeks.forEach(week => {
-    html += '<div class="flex flex-col gap-[3px]">';
+    html += '<div class="flex flex-col gap-[' + gap + 'px]">';
     week.forEach(cell => {
-      html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + cell.color + ' cursor-default" title="' + cell.tooltip + '"></div>';
+      const tooltipHtml = cell.tooltip ? cell.tooltip.replace(': ', '<br>').replace(', ', '<br>') : '';
+      html += '<div class="hm-cell relative group rounded-sm ' + cell.color + '" style="width:' + sq + 'px;height:' + sq + 'px">';
+      if (tooltipHtml) {
+        html += '<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl whitespace-nowrap z-20">';
+        html += tooltipHtml;
+        html += '<div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>';
+        html += '</div>';
+      }
+      html += '</div>';
     });
     html += '</div>';
   });
   html += '</div>';
 
   // Legend.
-  html += '<div class="flex items-center gap-1 mt-3 text-[10px] text-gray-500 ml-8">';
+  html += '<div class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-500 ml-9">';
   html += '<span>Less</span>';
   colors.forEach(c => {
-    html += '<div class="w-[10px] h-[10px] rounded-[2px] ' + c + '"></div>';
+    html += '<div class="rounded-sm ' + c + '" style="width:' + sq + 'px;height:' + sq + 'px"></div>';
   });
   html += '<span>More</span>';
   html += '<span class="ml-3">&#127942;</span>';
