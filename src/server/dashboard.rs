@@ -6,8 +6,7 @@ const APP_JS: &str = include_str!("../../dashboard/app.js");
 pub fn routes<S: Clone + Send + Sync + 'static>(dev: bool) -> Router<S> {
     if dev {
         // Dev mode: serve from disk (edit files, refresh browser, no rebuild).
-        Router::new().nest_service(
-            "/",
+        Router::new().fallback_service(
             tower_http::services::ServeDir::new("dashboard")
                 .fallback(tower_http::services::ServeFile::new("dashboard/index.html")),
         )
