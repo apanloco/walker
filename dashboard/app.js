@@ -190,7 +190,7 @@ function buildHeatmap(days) {
 
   // Month labels — position each label at the correct week column.
   const totalWeeks = weeks.length;
-  const sq = 14; // square size in px
+  const sq = 18; // square size in px
   const gap = 3;
   const cellSize = sq + gap;
   html += '<div class="relative mb-1 text-[11px] text-gray-500" style="height: 16px; margin-left: ' + (28 + gap) + 'px; width: ' + (totalWeeks * cellSize) + 'px">';
