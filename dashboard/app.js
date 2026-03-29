@@ -232,9 +232,9 @@ function buildHeatmap(days) {
       const posX = nearRight ? 'right-0' : nearLeft ? 'left-0' : 'left-1/2 -translate-x-1/2';
 
       html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
-      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20" style="max-width: 200px; white-space: normal;">';
+      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap">';
       html += tooltipLines;
-      if (food) html += '<div class="mt-1 text-base flex flex-wrap">' + food + '</div>';
+      if (food) html += '<div class="mt-1 text-base flex flex-wrap" style="max-width: 180px;">' + food + '</div>';
       html += '</div>';
       html += '</div>';
     });
