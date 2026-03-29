@@ -87,6 +87,7 @@ function fetchLeaderboard() {
       renderLeaderboard('lb-today', data.today);
       renderLeaderboard('lb-weekly', data.weekly);
       renderLeaderboard('lb-alltime', data.all_time);
+      if (window.twemoji) twemoji.parse(document.getElementById('page-leaderboard'));
     })
     .catch(() => {});
 }
@@ -259,7 +260,7 @@ function buildHeatmap(days) {
 // Sorted largest to smallest — greedy "coin change" algorithm.
 // Capped at Coca-Cola size so you see more emojis = more accomplishment.
 const foodItems = [
-  { emoji: '🧃', name: 'Coca-Cola 33cl', kcal: 139 },
+  { emoji: '🥤', name: 'Coca-Cola 33cl', kcal: 139 },
   { emoji: '🍪', name: 'Oreo cookie', kcal: 53 },
   { emoji: '🍬', name: 'Marshmallow', kcal: 23 },
   { emoji: '🍭', name: 'Lollipop', kcal: 11 },
@@ -404,6 +405,9 @@ function renderProfile(p) {
     </div>
     ` : ''}
   `;
+
+  // Render emojis consistently with Twemoji.
+  if (window.twemoji) twemoji.parse(el);
 }
 
 // -- WebSocket + polling --
