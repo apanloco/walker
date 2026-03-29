@@ -3,8 +3,10 @@
 function showTab(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.nav-tab').forEach(a => a.classList.remove('active'));
-  document.getElementById('page-' + name).classList.remove('hidden');
-  document.getElementById('tab-' + name).classList.add('active');
+  const page = document.getElementById('page-' + name);
+  if (page) page.classList.remove('hidden');
+  const tab = document.getElementById('tab-' + name);
+  if (tab) tab.classList.add('active');
   if (name === 'profile') {
     location.hash = 'profile/' + (currentProfileId || '');
     fetchProfile();
