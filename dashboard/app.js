@@ -130,10 +130,6 @@ function buildHeatmap(days) {
 
   // Generate exactly 53 weeks of dates ending this week.
   const today = new Date();
-  const todayStr = today.getFullYear() + '-' +
-    String(today.getMonth() + 1).padStart(2, '0') + '-' +
-    String(today.getDate()).padStart(2, '0');
-
   const cells = [];
 
   // Start 53 weeks ago, aligned to Monday.
@@ -147,17 +143,13 @@ function buildHeatmap(days) {
 
   // Generate all days from startDate to end of this week.
   const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  // End on Sunday (end of Monday-based week).
-  const endDow = endDate.getDay();
-  const sundayOffset = endDow === 0 ? 0 : 7 - endDow;
-  endDate.setDate(endDate.getDate() + sundayOffset);
+  // End today — no future days.
 
   const d = new Date(startDate);
   while (d <= endDate) {
     const dateStr = d.getFullYear() + '-' +
       String(d.getMonth() + 1).padStart(2, '0') + '-' +
       String(d.getDate()).padStart(2, '0');
-    const isFuture = dateStr > todayStr;
     const data = dataMap[dateStr];
     const cal = data ? data.calories_kcal : 0;
 
@@ -176,11 +168,11 @@ function buildHeatmap(days) {
       lastMonth = month;
     }
 
-    const tooltip = isFuture ? '' : (data
+    const tooltip = data
       ? dateStr + ': ' + data.calories_kcal.toFixed(1) + ' kcal, ' + data.distance_km.toFixed(2) + ' km'
-      : dateStr + ': no activity');
+      : dateStr + ': no activity';
 
-    const color = isFuture ? 'bg-transparent' : colors[level];
+    const color = colors[level];
     cells.push({ dateStr, level, color, tooltip, day: d.getDay() });
 
     d.setDate(d.getDate() + 1);
