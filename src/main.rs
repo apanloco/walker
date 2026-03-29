@@ -390,7 +390,8 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
 
 #[cfg(feature = "client")]
 const SIM_NAMES: &[&str] = &[
-    "alice", "bob", "charlie", "diana", "eve", "frank", "grace", "henry", "iris", "jack",
+    "alice", "bob", "charlie", "diana", "eve", "frank", "grace", "henry", "iris", "jack", "kate",
+    "leo", "mia", "noah", "olivia", "paul", "quinn", "ruby", "sam", "tara",
 ];
 
 #[cfg(feature = "client")]
@@ -417,6 +418,7 @@ async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
         }
     }
 
+    let mut rng = rand::rng();
     let mut tokens = Vec::new();
 
     for i in 0..count {
@@ -432,19 +434,21 @@ async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
             .await?;
 
         let token = res["token"].as_str().unwrap_or("").to_string();
-        println!("  Registered: {name} ({email})");
-        tokens.push((name.to_string(), token));
+        // Each user gets a distinct base speed: 1.0 to 5.0 mph spread across users.
+        let base_speed = 1.0 + (i as f32 / count.max(2) as f32) * 4.0;
+        println!("  Registered: {name} ({email}) @ {base_speed:.1} mph base");
+        tokens.push((name.to_string(), token, base_speed));
     }
 
     println!("  Simulating {count} users — press Ctrl+C to stop");
 
     let url = format!("{server}/api/update");
-    let mut rng = rand::rng();
 
     loop {
-        for (name, token) in &tokens {
-            let user_speed = speed + (rand::RngExt::random_range(&mut rng, -10..=10) as f32 * 0.1);
-            let user_speed = user_speed.max(0.5);
+        for (name, token, base_speed) in &tokens {
+            // Vary ±0.5 mph around each user's base speed.
+            let variation = rand::RngExt::random_range(&mut rng, -5..=5) as f32 * 0.1;
+            let user_speed = (base_speed + variation).max(0.5);
 
             let _ = client
                 .post(&url)
