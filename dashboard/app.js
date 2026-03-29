@@ -186,7 +186,7 @@ function buildHeatmap(days) {
   for (let i = 0; i < cells.length; i += 7) {
     weeks.push(cells.slice(i, i + 7));
   }
-  let html = '<div class="overflow-x-auto">';
+  let html = '<div class="overflow-visible">';
 
   // Month labels — position each label at the correct week column.
   const totalWeeks = weeks.length;
@@ -217,14 +217,24 @@ function buildHeatmap(days) {
   // Week columns.
   weeks.forEach((week, col) => {
     week.forEach((cell, row) => {
-      const tooltipHtml = cell.tooltip ? cell.tooltip.replace(': ', '<br>').replace(', ', '<br>') : '';
-      html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
-      if (tooltipHtml) {
-        html += '<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl whitespace-nowrap z-20">';
-        html += tooltipHtml;
-        html += '<div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>';
-        html += '</div>';
+      if (!cell.tooltip) {
+        html += '<div class="rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '"></div>';
+        return;
       }
+      const data = dataMap[cell.dateStr];
+      const food = data ? buildFoodEquiv(data.calories_kcal, false) : '';
+      const tooltipLines = cell.tooltip.replace(': ', '<br>').replace(', ', '<br>');
+      const showBelow = row < 3;
+      const posY = showBelow ? 'top-full mt-2' : 'bottom-full mb-2';
+      // Shift tooltip left when near right edge of grid.
+      const nearRight = col > totalWeeks - 6;
+      const posX = nearRight ? 'right-0' : 'left-1/2 -translate-x-1/2';
+
+      html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
+      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl whitespace-nowrap z-20">';
+      html += tooltipLines;
+      if (food) html += '<div class="mt-1 text-base">' + food + '</div>';
+      html += '</div>';
       html += '</div>';
     });
   });
@@ -247,27 +257,33 @@ function buildHeatmap(days) {
 }
 
 // Sorted largest to smallest — greedy "coin change" algorithm.
+// Capped at Coca-Cola size so you see more emojis = more accomplishment.
 const foodItems = [
-  { emoji: '🍔', name: 'Big Mac', kcal: 550 },
-  { emoji: '🧁', name: 'Kanelbulle', kcal: 350 },
-  { emoji: '🍕', name: 'Pizza slice', kcal: 285 },
-  { emoji: '🍫', name: 'Snickers bar', kcal: 250 },
-  { emoji: '🍺', name: 'Beer 50cl', kcal: 215 },
-  { emoji: '🥤', name: 'Coca-Cola 33cl', kcal: 139 },
+  { emoji: '🧃', name: 'Coca-Cola 33cl', kcal: 139 },
   { emoji: '🍪', name: 'Oreo cookie', kcal: 53 },
   { emoji: '🍬', name: 'Marshmallow', kcal: 23 },
+  { emoji: '🍭', name: 'Lollipop', kcal: 11 },
 ];
 
-function buildFoodEquiv(kcal) {
+function buildFoodEquiv(kcal, compact) {
   if (kcal <= 0) return '';
   let remaining = kcal;
   let html = '';
+  const maxPerItem = compact ? 5 : 30;
+
   for (const f of foodItems) {
     const count = Math.floor(remaining / f.kcal);
     if (count > 0) {
       remaining -= count * f.kcal;
-      for (let i = 0; i < count; i++) {
-        html += '<span class="cursor-default inline-block hover:scale-125 transition-transform" title="' + f.name + ' (' + f.kcal + ' kcal)">' + f.emoji + '</span>';
+      if (count <= maxPerItem) {
+        for (let i = 0; i < count; i++) {
+          html += '<span class="cursor-default inline-block hover:scale-125 transition-transform" title="' + f.name + ' (' + f.kcal + ' kcal)">' + f.emoji + '</span>';
+        }
+      } else {
+        html += '<span class="cursor-default inline-block" title="' + count + '× ' + f.name + ' (' + f.kcal + ' kcal each)">';
+        html += '<span class="text-xl">' + f.emoji + '</span>';
+        html += '<span class="text-xs text-gray-400 ml-0.5">×' + count + '</span>';
+        html += '</span> ';
       }
     }
   }
@@ -276,7 +292,7 @@ function buildFoodEquiv(kcal) {
 
 function buildFoodRow(label, kcal) {
   if (kcal <= 0) return '';
-  const equiv = buildFoodEquiv(kcal);
+  const equiv = buildFoodEquiv(kcal, kcal > 2000);
   return '<div class="py-3 border-t border-gray-800/50">' +
     '<div class="flex items-center justify-between mb-1">' +
       '<div class="text-xs text-gray-500">' + label + '</div>' +
@@ -375,7 +391,7 @@ function renderProfile(p) {
     </div>
 
     <!-- Heatmap -->
-    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8 overflow-visible">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Walking Activity</h3>
       ${buildHeatmap(p.heatmap)}
     </div>
