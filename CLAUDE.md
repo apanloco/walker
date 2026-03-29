@@ -109,6 +109,8 @@ No tick loop. 5s lightweight timer for disconnect detection only.
 
 **Calorie formula:** `MET(speed) × weight_kg × 1,000,000 / 3600 × elapsed_secs` (micocalories, integer, no drift)
 
+**Weight:** hardcoded to 70.0 kg for all users. The DB schema has a `weight_kg` column (future feature) but there is no UI or API to set it, and calorie computation uses the hardcoded default — not the DB value.
+
 **MET table:** 2 km/h→2.0, 3→2.5, 4→3.0, 5→3.5, 6→4.0 (linearly interpolated)
 
 **Disconnect:** no heartbeat for 5 seconds → status = `disconnected`
@@ -119,8 +121,8 @@ No tick loop. 5s lightweight timer for disconnect detection only.
 ```json
 {
   "users": [
-    {"id": "uuid", "name": "daniel", "status": "walking", "speed_mph": 2.0,
-     "distance_delta_m": 1.4, "calories_kcal": 45.2, "active_secs": 245}
+    {"id": "uuid", "name": "daniel", "avatar_url": "...", "status": "walking", "speed_mph": 2.0,
+     "distance_delta_m": 1.4, "calories_kcal": 45.2, "active_secs": 245, "idle_secs": 0}
   ]
 }
 ```
@@ -137,7 +139,7 @@ No tick loop. 5s lightweight timer for disconnect detection only.
 **`GET /api/profile/{id}`** — full year history, records, period calories:
 ```json
 {
-  "id": "uuid", "name": "daniel", "avatar_url": "...", "streak": 5,
+  "id": "uuid", "name": "daniel", "avatar_url": "...", "weight_kg": 70.0, "member_since": "2025-01-15", "streak": 5,
   "live": {"status": "walking", "speed_mph": 2.5},
   "totals": {"calories_kcal": 56983, "distance_km": 1025, "active_secs": 108000, "active_days": 270},
   "records": {"best_day_calories_kcal": 450, "best_day_distance_km": 9.09, "best_day_active_secs": 7140},
