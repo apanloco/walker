@@ -31,6 +31,10 @@ impl TreadmillProfile for UrevoProfile {
         "UREVO"
     }
 
+    fn notify_uuids(&self) -> &[Uuid] {
+        &[UREVO_NOTIFY_UUID]
+    }
+
     fn matches(&self, device_name: Option<&str>, _service_uuids: &[Uuid]) -> bool {
         // Only match by name prefix — FTMS UUID alone is too broad (matches bikes, rowers, etc.)
         if let Some(name) = device_name {

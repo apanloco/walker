@@ -332,6 +332,34 @@ Separate GitHub OAuth Apps for production and local dev. Same callback URL patte
 - Quick scan (1s) before full scan
 - Step tracker and activity tracker reset on reconnect
 
+## Future Features
+
+Roughly priority-ordered. Nothing here is committed — just ideas worth considering.
+
+### FTMS Device Support
+Add a generic FTMS (Fitness Machine Service) BLE profile. The `TreadmillProfile` trait already supports multiple devices — one new profile would unlock dozens of treadmill brands. Biggest single lever for growing the user base.
+
+### Goals & Streaks on Leaderboard
+Daily/weekly calorie or distance targets. Heatmap cells could show goal completion. Streaks are already computed but only visible on profiles — surfacing them on the leaderboard (fire emoji next to names) creates social pressure to maintain them.
+
+### Challenges Between Users
+Time-boxed duels: "walk 10km this week against a friend." Challenges turn the passive leaderboard into active competition and give people a reason to invite others.
+
+### Weight Tracking
+The DB column and calorie formula already support per-user weight — but it's hardcoded at 70 kg with no UI to change it. Adding a profile settings page would make calories accurate and give users a reason to come back (track weight over time).
+
+### Live Reactions
+Let dashboard viewers send quick reactions to someone currently walking. Tiny feature, big engagement — turns spectating into interaction.
+
+### Trends & Comparisons
+"You walked 15% more this week than last." Simple period-over-period comparisons surfaced on the profile page.
+
+### Mobile-Friendly Dashboard
+People check this from their phone while on the treadmill. The dashboard should be great on small screens.
+
+### Push Notifications
+"Your streak is about to break!" or "Alice just passed your weekly total." Requires service worker / web push.
+
 ## References
 
 - [TreadSpan](https://github.com/blak3r/treadspan) — UREVO E1L protocol reverse-engineering

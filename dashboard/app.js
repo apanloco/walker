@@ -1,3 +1,5 @@
+const LEADERBOARD_REFRESH_DELAY_MS = 0;
+
 // -- Tab navigation --
 
 function showTab(name) {
@@ -426,7 +428,7 @@ function connect() {
   ws.onmessage = () => {
     if (!pendingRefresh) {
       pendingRefresh = true;
-      setTimeout(() => { fetchLeaderboard(); pendingRefresh = false; }, 5000);
+      setTimeout(() => { fetchLeaderboard(); pendingRefresh = false; }, LEADERBOARD_REFRESH_DELAY_MS);
     }
   };
 
