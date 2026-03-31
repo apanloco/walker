@@ -125,9 +125,11 @@ pub trait TreadmillProfile: Send + Sync {
     /// Check if this profile matches a discovered device.
     fn matches(&self, device_name: Option<&str>, service_uuids: &[Uuid]) -> bool;
 
+    /// Which characteristic UUIDs this profile needs notifications from.
+    fn notify_uuids(&self) -> &[Uuid];
+
     /// After connection + service discovery, perform profile-specific activation
     /// (e.g., write commands to start a proprietary data stream).
-    /// Generic subscribe-to-all-notify is handled by the caller.
     async fn activate(&self, device: &btleplug::platform::Peripheral) -> anyhow::Result<()>;
 
     /// Parse a BLE notification into a TreadmillEvent.

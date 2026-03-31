@@ -26,6 +26,9 @@ const DEV_SERVER: &str = "http://localhost:3000";
 #[derive(Parser)]
 #[command(name = "walker", about = "Bluetooth walking machine tracker")]
 struct Cli {
+    /// Log verbosity level (trace, debug, info, warn, error)
+    #[arg(short, long, global = true)]
+    verbose: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -111,14 +114,18 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    let log_filter = cli
+        .verbose
+        .as_deref()
+        .map(|v| format!("walker={v}"))
+        .or_else(|| std::env::var("RUST_LOG").ok())
+        .unwrap_or_else(|| "info".to_string());
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(&log_filter))
+        .init();
 
     match cli.command {
         #[cfg(feature = "client")]
@@ -323,7 +330,7 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
             info!(uuid = %service.uuid, "\n{}", chars.join("\n"));
         }
 
-        ble::subscribe_all_notify(&device).await?;
+        ble::subscribe_notify(&device, profile.notify_uuids()).await?;
         profile.activate(&device).await?;
 
         info!("{}", "Listening for data — press Ctrl+C to stop".green());
@@ -347,6 +354,11 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
                         break;
                     }
                 };
+            tracing::trace!(
+                bytes = notification.value.len(),
+                uuid = %notification.uuid,
+                "BLE notification received",
+            );
             if lines_since_header.is_multiple_of(20) {
                 display::print_walk_header();
             }

@@ -79,16 +79,19 @@ pub async fn find_treadmill<'a>(
     Ok(None)
 }
 
-/// Subscribe to all characteristics that support notifications.
-pub async fn subscribe_all_notify(
+/// Subscribe to the specific notification characteristics a profile needs.
+pub async fn subscribe_notify(
     device: &btleplug::platform::Peripheral,
+    notify_uuids: &[uuid::Uuid],
 ) -> anyhow::Result<Vec<Characteristic>> {
     let services = device.services();
     let mut subscribed = Vec::new();
 
     for service in &services {
         for ch in &service.characteristics {
-            if ch.properties.contains(CharPropFlags::NOTIFY) {
+            if notify_uuids.contains(&ch.uuid)
+                && ch.properties.contains(CharPropFlags::NOTIFY)
+            {
                 match device.subscribe(ch).await {
                     Ok(()) => {
                         subscribed.push(ch.clone());
