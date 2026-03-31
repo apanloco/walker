@@ -376,6 +376,13 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
                     }
                 }
                 Some(TreadmillEvent::StatusOnly(status)) => {
+                    // Standby/Off = session ended, step counter will reset to 0.
+                    // Reset trackers so the jump isn't mistaken for a 10k wrap.
+                    // Don't reset on Pausing/Paused — those are mid-session.
+                    if matches!(status, TreadmillStatus::Standby | TreadmillStatus::Off) {
+                        step_tracker.on_reconnect();
+                        activity_tracker.on_reconnect();
+                    }
                     display::print_status_row(&status, &notification.value);
                 }
                 Some(TreadmillEvent::Unknown { data, .. }) => {
