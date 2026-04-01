@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tracing::{error, warn};
 
 use super::db;
-use super::live::SharedLive;
+use super::live::{self, SharedLive};
 
 pub fn routes() -> Router<SharedLive> {
     Router::new()
@@ -71,19 +71,20 @@ async fn handle_update(
             }
         }
 
-        // Broadcast state change.
-        match db::live_snapshot(pool).await {
-            Ok(broadcast) => {
-                let _ = ctx.broadcast_tx.send(broadcast);
-            }
-            Err(e) => error!(error = %e, "Failed to build live snapshot"),
-        }
+        // Notify all viewers (leaderboard refresh, closed segments refresh).
+        let _ = ctx.broadcast_tx.send(());
+
+        // Push live segment to per-user subscribers.
+        live::push_user_segment(&ctx, user.id).await;
     } else if let Some(seg) = &open_seg {
         // Heartbeat: update segment duration + last_heartbeat_at.
         let met = db::met_for_speed_kmh(seg.speed_kmh);
         if let Err(e) = db::update_open_segment(pool, seg.id, met).await {
             error!(error = %e, segment_id = seg.id, "Failed to update segment");
         }
+
+        // Push updated segment to per-user subscribers.
+        live::push_user_segment(&ctx, user.id).await;
     }
 
     StatusCode::OK
@@ -118,6 +119,9 @@ async fn handle_set_weight(
     if let Err(e) = db::update_open_segment_weight(pool, user.id, payload.weight_kg).await {
         error!(error = %e, "Failed to update open segment weight");
     }
+
+    // Push updated segment to per-user subscribers.
+    live::push_user_segment(&ctx, user.id).await;
 
     StatusCode::OK
 }

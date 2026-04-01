@@ -3,7 +3,7 @@ use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use tracing::info;
 
-use super::live::{LiveBroadcast, LiveUser, TokenUser};
+use super::live::TokenUser;
 
 /// Hash a token with SHA-256 for storage. Tokens are high-entropy random
 /// strings, so a fast hash is sufficient (no need for bcrypt/argon2).
@@ -198,19 +198,21 @@ pub async fn update_open_segment(pool: &PgPool, segment_id: i64, met: f64) -> an
 }
 
 /// Update the weight on a user's open segment and recalculate calories.
+/// Two-step: set weight first, then recalculate — because PostgreSQL
+/// evaluates all SET expressions against pre-update values.
 pub async fn update_open_segment_weight(
     pool: &PgPool,
     user_id: uuid::Uuid,
     weight_kg: f32,
 ) -> anyhow::Result<()> {
     if let Some(seg) = get_open_segment(pool, user_id).await? {
-        let met = met_for_speed_kmh(seg.speed_kmh);
-        sqlx::query(&open_segment_update_sql("now()", "weight_kg = $3"))
+        sqlx::query("UPDATE segments SET weight_kg = $2 WHERE id = $1")
             .bind(seg.id)
-            .bind(met as f32)
             .bind(weight_kg)
             .execute(pool)
             .await?;
+        let met = met_for_speed_kmh(seg.speed_kmh);
+        update_open_segment(pool, seg.id, met).await?;
     }
     Ok(())
 }
@@ -261,49 +263,38 @@ pub async fn get_live_statuses(pool: &PgPool) -> anyhow::Result<HashMap<uuid::Uu
         .collect())
 }
 
-/// Build a live snapshot of all users with open segments + today's totals.
-pub async fn live_snapshot(pool: &PgPool) -> anyhow::Result<LiveBroadcast> {
-    let rows = sqlx::query(
-        "SELECT u.id, u.display_name, u.avatar_url,
-                s.moving, s.speed_kmh,
-                COALESCE(t.total_kcal, 0)::REAL AS calories_kcal,
-                COALESCE(t.total_dist, 0)::REAL AS distance_m,
-                COALESCE(t.total_secs, 0)::REAL AS active_secs
-         FROM segments s
-         JOIN users u ON u.id = s.user_id
-         LEFT JOIN LATERAL (
-             SELECT
-                 SUM(calories_kcal)::REAL AS total_kcal,
-                 SUM(distance_m)::REAL AS total_dist,
-                 SUM(CASE WHEN open THEN EXTRACT(EPOCH FROM now() - started_at)
-                          ELSE duration_s END)::REAL AS total_secs
-             FROM segments
-             WHERE user_id = s.user_id AND moving = true AND started_at::date = CURRENT_DATE
-         ) t ON true
-         WHERE s.open = true",
+/// Get the current open segment for a user as JSON (for WebSocket push).
+/// Returns `{"segment": {...}}` or `{"segment": null}`.
+pub async fn get_current_segment_json(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+) -> anyhow::Result<String> {
+    let row = sqlx::query(
+        "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
+                calories_kcal, distance_m
+         FROM segments
+         WHERE user_id = $1 AND open = true",
     )
-    .fetch_all(pool)
+    .bind(user_id)
+    .fetch_optional(pool)
     .await?;
 
-    let users = rows
-        .iter()
-        .map(|r| {
-            let moving: bool = r.get("moving");
-            let status = if moving { "walking" } else { "idle" };
-            LiveUser {
-                id: r.get::<uuid::Uuid, _>("id"),
-                name: r.get("display_name"),
-                avatar_url: r.get("avatar_url"),
-                status: status.to_string(),
-                speed_kmh: r.get::<f32, _>("speed_kmh") as f64,
-                calories_kcal: r.get::<f32, _>("calories_kcal") as f64,
-                distance_m: r.get::<f32, _>("distance_m") as f64,
-                active_secs: r.get::<f32, _>("active_secs") as u64,
+    let json = match row {
+        Some(r) => serde_json::json!({
+            "segment": {
+                "started_at": r.get::<String, _>("started_at"),
+                "moving": r.get::<bool, _>("moving"),
+                "speed_kmh": r.get::<f32, _>("speed_kmh"),
+                "duration_s": r.get::<f32, _>("duration_s"),
+                "weight_kg": r.get::<f32, _>("weight_kg"),
+                "calories_kcal": r.get::<f32, _>("calories_kcal"),
+                "distance_m": r.get::<f32, _>("distance_m"),
+                "open": true,
             }
-        })
-        .collect();
-
-    Ok(LiveBroadcast { users })
+        }),
+        None => serde_json::json!({"segment": null}),
+    };
+    Ok(json.to_string())
 }
 
 // -- Seed dev data --
