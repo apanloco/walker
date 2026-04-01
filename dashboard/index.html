@@ -28,26 +28,40 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
 <body class="bg-surface-950 text-gray-200 min-h-screen">
 
 <!-- Nav -->
-<nav class="bg-surface-900 border-b border-gray-800 px-6 flex items-center justify-between">
-  <div class="flex items-center gap-1">
-    <span class="text-walker-500 font-bold text-lg mr-4 py-3">Walker</span>
-    <a id="tab-leaderboard" class="nav-tab active" onclick="showTab('leaderboard')">Leaderboard</a>
+<nav class="bg-surface-900 border-b border-gray-800 px-6 flex items-center justify-between h-12">
+  <div class="flex items-center gap-1 h-full">
+    <!-- Logo -->
+    <a href="/" class="flex items-center gap-2 mr-5 group">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" class="text-walker-500">
+        <circle cx="12" cy="4.5" r="2.5" fill="currentColor"/>
+        <path d="M15.5 9.5C14.5 8.5 13.3 8 12 8C10.7 8 9.5 8.5 8.5 9.5L6 12L7.4 13.4L9.5 11.3V22H11.5V17H12.5V22H14.5V11.3L16.6 13.4L18 12L15.5 9.5Z" fill="currentColor"/>
+      </svg>
+      <span class="text-walker-500 font-bold text-base group-hover:text-walker-600 transition-colors">Walker</span>
+    </a>
+    <!-- Tabs -->
+    <a id="tab-leaderboard" href="/" class="nav-tab">Leaderboard</a>
+    <a id="tab-activity" href="/activity" class="nav-tab" style="display:none">Activity</a>
   </div>
-  <div id="nav-user" class="text-sm text-gray-400 flex items-center gap-3"></div>
+  <!-- Right: avatar or login -->
+  <div id="nav-user" class="flex items-center"></div>
 </nav>
 
 <style>
   .nav-tab {
-    padding: 12px 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; height: 100%;
+    padding: 0 16px; cursor: pointer; font-size: 13px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em; color: #666;
     border-bottom: 2px solid transparent; transition: all 0.2s;
   }
   .nav-tab:hover { color: #aaa; }
   .nav-tab.active { color: #22c55e; border-bottom-color: #22c55e; }
+  .segment-row {
+    display: grid;
+    grid-template-columns: 16px 100px 100px 80px 80px 72px 64px 48px;
+    align-items: center;
+    gap: 0 12px;
+  }
 </style>
-
-<!-- Connection status -->
-<div id="connection-status" class="text-xs px-6 py-1 text-gray-600">Connecting...</div>
 
 <!-- Leaderboard page -->
 <div id="page-leaderboard" class="page px-6 pb-8 hidden">
@@ -74,9 +88,9 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
 
 <!-- Activity page -->
 <div id="page-activity" class="page px-6 pb-8 hidden">
-  <h2 class="text-lg font-bold text-white mt-4 mb-4">Today's Activity</h2>
+  <h2 id="activity-heading" class="text-lg font-bold text-white mt-4 mb-4">Today's Activity</h2>
+  <div id="activity-live" class="mb-2"></div>
   <div id="activity-closed"></div>
-  <div id="activity-live" class="mt-2"></div>
 </div>
 
 <script src="/app.js"></script>

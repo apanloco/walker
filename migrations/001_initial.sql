@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS tokens (
     token       TEXT PRIMARY KEY, -- SHA-256 hash of the plaintext token; plaintext never stored
-    user_id     UUID NOT NULL REFERENCES users(id),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at  TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '180 days'
 );
@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
 -- Segments: each contiguous period of walking or idle.
 CREATE TABLE IF NOT EXISTS segments (
     id           BIGSERIAL PRIMARY KEY,
-    user_id      UUID NOT NULL REFERENCES users(id),
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     started_at   TIMESTAMPTZ NOT NULL,
     moving       BOOLEAN NOT NULL,
     speed_kmh    REAL NOT NULL,

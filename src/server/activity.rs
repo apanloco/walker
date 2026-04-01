@@ -1,11 +1,8 @@
-use axum::{
-    Json, Router,
-    extract::{Path, State},
-    routing::get,
-};
+use axum::{Router, extract::{Path, Query, State}, http::StatusCode, response::IntoResponse, routing::get};
+use serde::Deserialize;
 use sqlx::Row;
 
-use super::live::SharedLive;
+use super::{db, live::SharedLive};
 
 pub fn routes() -> Router<SharedLive> {
     Router::new()
@@ -13,27 +10,61 @@ pub fn routes() -> Router<SharedLive> {
         .route("/api/activity/{id}/current", get(get_current_segment))
 }
 
-/// Closed segments for today — historical record, doesn't change between state changes.
+#[derive(Deserialize)]
+struct ActivityQuery {
+    date: Option<String>,
+}
+
+/// Closed segments for a given date (defaults to today).
 async fn get_closed_segments(
     State(ctx): State<SharedLive>,
+    headers: axum::http::HeaderMap,
     Path(id_str): Path<String>,
-) -> Json<serde_json::Value> {
+    Query(query): Query<ActivityQuery>,
+) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
+    let Some(caller) = super::cookie_user_id(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !db::user_exists(pool, caller).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
-        return Json(serde_json::json!({"error": "invalid user id"}));
+        return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
-    let rows = sqlx::query(
-        "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                calories_kcal, distance_m
-         FROM segments
-         WHERE user_id = $1 AND started_at::date = CURRENT_DATE AND open = false
-         ORDER BY started_at ASC",
-    )
-    .bind(id)
-    .fetch_all(pool.as_ref())
-    .await;
+    // Parse date or default to today. Validate format to prevent SQL injection.
+    let date_filter = match &query.date {
+        Some(d) if d.len() == 10 && d.chars().all(|c| c.is_ascii_digit() || c == '-') => d.clone(),
+        _ => String::new(),
+    };
+
+    let rows = if date_filter.is_empty() {
+        sqlx::query(
+            "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
+                    calories_kcal, distance_m
+             FROM segments
+             WHERE user_id = $1 AND started_at::date = CURRENT_DATE AND open = false
+             ORDER BY started_at ASC",
+        )
+        .bind(id)
+        .fetch_all(pool.as_ref())
+        .await
+    } else {
+        sqlx::query(
+            "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
+                    calories_kcal, distance_m
+             FROM segments
+             WHERE user_id = $1 AND started_at::date = $2::date AND open = false
+             ORDER BY started_at ASC",
+        )
+        .bind(id)
+        .bind(&date_filter)
+        .fetch_all(pool.as_ref())
+        .await
+    };
 
     let segments: Vec<serde_json::Value> = match rows {
         Ok(rows) => rows.iter().map(|r| segment_json(r, false)).collect(),
@@ -43,18 +74,26 @@ async fn get_closed_segments(
         }
     };
 
-    Json(serde_json::json!({ "segments": segments }))
+    axum::Json(serde_json::json!({ "segments": segments })).into_response()
 }
 
 /// The one open segment — live data, polled by the client on its own schedule.
 async fn get_current_segment(
     State(ctx): State<SharedLive>,
+    headers: axum::http::HeaderMap,
     Path(id_str): Path<String>,
-) -> Json<serde_json::Value> {
+) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
+    let Some(caller) = super::cookie_user_id(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !db::user_exists(pool, caller).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
-        return Json(serde_json::json!({"error": "invalid user id"}));
+        return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
     let row = sqlx::query(
@@ -68,11 +107,11 @@ async fn get_current_segment(
     .await;
 
     match row {
-        Ok(Some(r)) => Json(serde_json::json!({ "segment": segment_json(&r, true) })),
-        Ok(None) => Json(serde_json::json!({ "segment": null })),
+        Ok(Some(r)) => axum::Json(serde_json::json!({ "segment": segment_json(&r, true) })).into_response(),
+        Ok(None) => axum::Json(serde_json::json!({ "segment": null })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "activity current segment query failed");
-            Json(serde_json::json!({ "segment": null }))
+            axum::Json(serde_json::json!({ "segment": null })).into_response()
         }
     }
 }

@@ -24,6 +24,15 @@ pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     Ok(pool)
 }
 
+/// Check if a user exists by ID (for cookie auth).
+pub async fn user_exists(pool: &PgPool, id: uuid::Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+}
+
 /// Ensure a user exists in the DB. Upserts display_name and avatar on login.
 pub async fn upsert_user(
     pool: &PgPool,
@@ -113,6 +122,8 @@ pub struct OpenSegment {
     pub id: i64,
     pub moving: bool,
     pub speed_kmh: f64,
+    /// How many seconds ago this segment started (computed by the DB).
+    pub age_secs: f64,
 }
 
 /// Get the current open segment for a user, if any.
@@ -121,7 +132,9 @@ pub async fn get_open_segment(
     user_id: uuid::Uuid,
 ) -> anyhow::Result<Option<OpenSegment>> {
     let row = sqlx::query(
-        "SELECT id, moving, speed_kmh FROM segments WHERE user_id = $1 AND open = true",
+        "SELECT id, moving, speed_kmh,
+                EXTRACT(EPOCH FROM now() - started_at)::REAL AS age_secs
+         FROM segments WHERE user_id = $1 AND open = true",
     )
     .bind(user_id)
     .fetch_optional(pool)
@@ -131,6 +144,7 @@ pub async fn get_open_segment(
         id: r.get("id"),
         moving: r.get("moving"),
         speed_kmh: r.get::<f32, _>("speed_kmh") as f64,
+        age_secs: r.get::<f32, _>("age_secs") as f64,
     }))
 }
 
@@ -154,6 +168,53 @@ pub async fn open_segment(
     .fetch_one(pool)
     .await?;
     Ok(row.get("id"))
+}
+
+/// Maximum age (seconds) of a false idle segment that can be absorbed back into
+/// the previous walking segment. Keeps idle detection fast on the client while
+/// cleaning up sensor noise on the server.
+pub const MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS: f64 = 10.0;
+
+/// Maximum age (seconds) of the previous walking segment's last heartbeat for it
+/// to be eligible for reopening during idle absorption.
+const MAX_ABSORB_REOPEN_WINDOW_SECS: f64 = 15.0;
+
+/// Delete a segment by ID. Returns true if a row was deleted.
+pub async fn delete_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<bool> {
+    let result = sqlx::query("DELETE FROM segments WHERE id = $1")
+        .bind(segment_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Try to reopen the most recent closed walking segment for a user, if it was
+/// active recently and at the same speed. Used to absorb false idle blips.
+/// Returns true if a segment was reopened.
+pub async fn reopen_previous_walking_segment(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    speed_kmh: f64,
+) -> anyhow::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE segments
+         SET open = true, last_heartbeat_at = now()
+         WHERE id = (
+             SELECT id FROM segments
+             WHERE user_id = $1
+               AND open = false
+               AND moving = true
+               AND last_heartbeat_at > now() - make_interval(secs => $2)
+               AND abs(speed_kmh - $3) < 0.05
+             ORDER BY started_at DESC LIMIT 1
+         )",
+    )
+    .bind(user_id)
+    .bind(MAX_ABSORB_REOPEN_WINDOW_SECS)
+    .bind(speed_kmh as f32)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Recompute a segment's duration, calories, and distance from a given end-time expression.
@@ -218,10 +279,14 @@ pub async fn update_open_segment_weight(
 }
 
 /// Close stale open segments whose last heartbeat is older than `threshold_secs`.
+/// Returns the user IDs of affected users (for notifying viewers).
 /// Used for both startup crash recovery (60s) and disconnect detection (5s).
-pub async fn close_stale_segments(pool: &PgPool, threshold_secs: f64) -> anyhow::Result<u64> {
+pub async fn close_stale_segments(
+    pool: &PgPool,
+    threshold_secs: f64,
+) -> anyhow::Result<Vec<uuid::Uuid>> {
     let rows = sqlx::query(
-        "SELECT id, speed_kmh FROM segments
+        "SELECT id, user_id, speed_kmh FROM segments
          WHERE open = true
            AND EXTRACT(EPOCH FROM now() - last_heartbeat_at) > $1",
     )
@@ -229,9 +294,11 @@ pub async fn close_stale_segments(pool: &PgPool, threshold_secs: f64) -> anyhow:
     .fetch_all(pool)
     .await?;
 
+    let mut user_ids = Vec::new();
     let sql = open_segment_update_sql("last_heartbeat_at", "open = false");
     for row in &rows {
         let id: i64 = row.get("id");
+        let user_id: uuid::Uuid = row.get("user_id");
         let speed: f32 = row.get("speed_kmh");
         let met = met_for_speed_kmh(speed as f64);
         if let Err(e) = sqlx::query(&sql)
@@ -241,9 +308,11 @@ pub async fn close_stale_segments(pool: &PgPool, threshold_secs: f64) -> anyhow:
             .await
         {
             tracing::error!(error = %e, segment_id = id, "Failed to close stale segment");
+        } else {
+            user_ids.push(user_id);
         }
     }
-    Ok(rows.len() as u64)
+    Ok(user_ids)
 }
 
 /// Get live status (moving, speed) for all users with open segments.

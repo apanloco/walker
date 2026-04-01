@@ -1,26 +1,61 @@
-// -- Tab navigation --
+// -- Page initialization (determined by URL, no client-side routing) --
 
-function showTab(name) {
+function initPage() {
+  const path = location.pathname;
+
+  // Migrate legacy hash URLs.
+  if (location.hash.length > 1) {
+    const hash = location.hash.slice(1);
+    if (hash.startsWith('profile/') || hash.startsWith('activity/') || hash === 'activity') {
+      location.replace('/' + hash);
+      return;
+    }
+  }
+
+  let page = 'leaderboard';
+  if (path.startsWith('/profile/')) {
+    currentProfileId = path.split('/')[2] || null;
+    page = 'profile';
+  } else if (path.startsWith('/activity')) {
+    currentActivityId = path.split('/')[2] || null;
+    page = 'activity';
+  }
+
+  // Profile and activity require login.
+  if ((page === 'profile' || page === 'activity') && !loggedInId) {
+    location.replace('/');
+    return;
+  }
+
+  // Show the active page and tab.
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.nav-tab').forEach(a => a.classList.remove('active'));
-  const page = document.getElementById('page-' + name);
-  if (page) page.classList.remove('hidden');
-  const tab = document.getElementById('tab-' + name);
-  if (tab) tab.classList.add('active');
-  if (name === 'profile') {
-    location.hash = 'profile/' + (currentProfileId || '');
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.remove('hidden');
+  const tabEl = document.getElementById('tab-' + page);
+  if (tabEl) tabEl.classList.add('active');
+
+  if (page === 'profile') {
     fetchProfile();
-  } else if (name === 'activity') {
-    // Don't put own ID in URL — use bare #activity for own activity.
-    location.hash = (currentActivityId && currentActivityId !== loggedInId)
-      ? 'activity/' + currentActivityId : 'activity';
+  } else if (page === 'activity') {
+    if (!currentActivityId) currentActivityId = loggedInId;
+    currentActivityDate = new URLSearchParams(location.search).get('date');
+    // Update heading.
+    const heading = document.getElementById('activity-heading');
+    if (heading) {
+      if (currentActivityDate) {
+        const d = new Date(currentActivityDate + 'T00:00:00');
+        heading.textContent = formatDate(d) + ' Activity';
+      } else {
+        heading.textContent = "Today's Activity";
+      }
+    }
     fetchActivityClosed();
-    connectActivityWs();
-  } else {
-    disconnectActivityWs();
-    location.hash = name;
+    // Only connect live WebSocket for today.
+    if (!currentActivityDate) connectActivityWs();
   }
 }
+
 
 // -- Cookie helper --
 
@@ -32,20 +67,68 @@ function getCookie(name) {
 // -- Auth state --
 
 const loggedInId = getCookie('walker_id');
-let currentProfileId = new URLSearchParams(location.search).get('id') || loggedInId;
+let currentProfileId = loggedInId;
+let currentActivityId = null;
+let currentActivityDate = null; // null = today
+let activityWs = null;
+let lastLiveSegment = null;
+let loggedInAvatar = null;
 
 const navUser = document.getElementById('nav-user');
+
 function logout() {
   document.cookie = 'walker_id=; Path=/; Max-Age=0';
-  location.reload();
+  location.href = '/';
+}
+
+function toggleUserMenu() {
+  const menu = document.getElementById('user-menu');
+  if (menu) menu.classList.toggle('hidden');
+}
+
+// Close menu when clicking outside.
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('user-menu');
+  const btn = document.getElementById('avatar-btn');
+  if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+    menu.classList.add('hidden');
+  }
+});
+
+function buildAvatarButton(avatarUrl) {
+  const avatar = avatarUrl
+    ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700 hover:ring-walker-500 transition-all cursor-pointer" src="' + avatarUrl + '" alt="">'
+    : '<div class="w-8 h-8 rounded-full bg-gray-700 ring-2 ring-gray-600 hover:ring-walker-500 transition-all cursor-pointer flex items-center justify-center"><svg class="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg></div>';
+
+  navUser.innerHTML =
+    '<div class="relative">' +
+      '<button id="avatar-btn" onclick="toggleUserMenu()" class="flex items-center">' + avatar + '</button>' +
+      '<div id="user-menu" class="hidden absolute right-0 mt-2 w-44 bg-surface-800 border border-gray-700 rounded-lg shadow-xl z-50 py-1">' +
+        '<a href="/profile/' + loggedInId + '" class="block px-4 py-2 text-sm text-gray-300 hover:bg-surface-900 hover:text-white">Profile</a>' +
+        '<a class="block px-4 py-2 text-sm text-gray-600 cursor-not-allowed">Settings</a>' +
+        '<div class="border-t border-gray-700 my-1"></div>' +
+        '<a href="javascript:void(0)" onclick="logout()" class="block px-4 py-2 text-sm text-gray-400 hover:bg-surface-900 hover:text-red-400">Logout</a>' +
+      '</div>' +
+    '</div>';
 }
 
 if (loggedInId) {
-  navUser.innerHTML = '<a href="javascript:void(0)" onclick="showActivity(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Activity</a>' +
-    '<a href="javascript:void(0)" onclick="showProfile(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Profile</a>' +
-    '<a href="javascript:void(0)" onclick="logout()" class="text-gray-500 hover:text-gray-400 font-medium">Logout</a>';
+  // Show Activity tab.
+  document.getElementById('tab-activity').style.display = '';
+  // Build avatar button (no avatar URL yet — will update after first profile fetch).
+  buildAvatarButton(null);
+  // Fetch own profile to get avatar URL.
+  fetch('/api/profile/' + encodeURIComponent(loggedInId))
+    .then(r => r.json())
+    .then(p => {
+      if (p.avatar_url) {
+        loggedInAvatar = p.avatar_url;
+        buildAvatarButton(p.avatar_url);
+      }
+    })
+    .catch(() => {});
 } else {
-  navUser.innerHTML = '<a href="/auth/web/github" class="text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a>';
+  navUser.innerHTML = '<a href="/auth/web/github" class="text-sm text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a>';
 }
 
 // -- Leaderboard --
@@ -83,7 +166,7 @@ function renderLeaderboard(elementId, entries) {
         : '<div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">' + e.name[0].toUpperCase() + '</div>'
       }
       <div class="flex-1 min-w-0">
-        <div class="font-medium text-sm text-gray-200 truncate cursor-pointer hover:text-white" onclick="showProfile('${e.id}')">${e.name}</div>
+        <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${e.name}</a>
         <div class="flex items-center gap-1 mt-0.5">${statusIndicator(e)}</div>
       </div>
       <div class="text-right">
@@ -107,11 +190,6 @@ function fetchLeaderboard() {
 }
 
 // -- Profile --
-
-function showProfile(id) {
-  currentProfileId = id;
-  showTab('profile');
-}
 
 function formatDuration(secs) {
   const h = Math.floor(secs / 3600);
@@ -245,12 +323,15 @@ function buildHeatmap(days) {
       const nearLeft = col < 6;
       const posX = nearRight ? 'right-0' : nearLeft ? 'left-0' : 'left-1/2 -translate-x-1/2';
 
-      html += '<div class="relative group rounded-sm ' + cell.color + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
-      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap">';
+      const isClickable = data && data.calories_kcal > 0 && currentProfileId;
+      const tag = isClickable ? 'a' : 'div';
+      const href = isClickable ? ' href="/activity/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
+      html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
+      html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">';
       html += tooltipLines;
       if (food) html += '<div class="mt-1 text-base flex flex-wrap" style="max-width: 180px;">' + food + '</div>';
       html += '</div>';
-      html += '</div>';
+      html += '</' + tag + '>';
     });
   });
   html += '</div>';
@@ -426,18 +507,10 @@ function renderProfile(p) {
 
 // -- Activity page --
 
-let currentActivityId = null;
-let activityWs = null;
-let lastLiveSegment = null;
-
-function showActivity(id) {
-  currentActivityId = id || loggedInId;
-  showTab('activity');
-}
-
 function fetchActivityClosed() {
   if (!currentActivityId) return;
-  fetch('/api/activity/' + encodeURIComponent(currentActivityId))
+  const dateParam = currentActivityDate ? '?date=' + encodeURIComponent(currentActivityDate) : '';
+  fetch('/api/activity/' + encodeURIComponent(currentActivityId) + dateParam)
     .then(r => r.json())
     .then(data => {
       renderClosedSegments(data.segments || []);
@@ -512,30 +585,45 @@ function renderClosedSegments(segments) {
   }
   if (currentSession.length > 0) sessions.push(currentSession);
 
+  // Newest first: reverse sessions and segments within each session.
+  sessions.reverse();
+  sessions.forEach(s => s.reverse());
+
   let html = '';
 
   sessions.forEach((session, si) => {
     if (si > 0) html += '<div class="my-6"></div>';
 
-    const sessionStart = new Date(session[0].started_at);
-    const lastSeg = session[session.length - 1];
-    const sessionEnd = new Date(new Date(lastSeg.started_at).getTime() + lastSeg.duration_s * 1000);
+    // Segments are reversed (newest first), so last element is earliest.
+    const sessionStart = new Date(session[session.length - 1].started_at);
+    const firstSeg = session[0];
+    const sessionEnd = new Date(new Date(firstSeg.started_at).getTime() + firstSeg.duration_s * 1000);
     const totalCal = session.filter(s => s.moving).reduce((sum, s) => sum + s.calories_kcal, 0);
     const totalDist = session.filter(s => s.moving).reduce((sum, s) => sum + s.distance_m, 0);
     const totalDur = session.filter(s => s.moving).reduce((sum, s) => sum + s.duration_s, 0);
 
     html += '<div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-4">';
     html += '<div class="flex items-center justify-between mb-4">';
-    html += '<div class="text-sm text-gray-400">' + formatDate(sessionStart) + ' · ' + formatTime(sessionStart) + ' – ' + formatTime(sessionEnd) + '</div>';
-    html += '<div class="text-sm text-gray-500">' + totalCal.toFixed(1) + ' kcal · ' + (totalDist / 1000).toFixed(2) + ' km · ' + formatDurationLong(totalDur) + '</div>';
+    html += '<div class="text-sm text-gray-400">' + formatDate(sessionStart) + ' · ' + formatTime(sessionStart) + ' – <span id="session-end-' + si + '">' + formatTime(sessionEnd) + '</span></div>';
+    html += '<div id="session-stats-' + si + '" class="text-sm text-gray-500">' + totalCal.toFixed(1) + ' kcal · ' + (totalDist / 1000).toFixed(2) + ' km · ' + formatDurationLong(totalDur) + '</div>';
     html += '</div>';
 
-    session.forEach((seg, si) => {
-      if (si > 0) {
-        const prev = session[si - 1];
-        const prevEnd = new Date(prev.started_at).getTime() / 1000 + prev.duration_s;
-        const thisStart = new Date(seg.started_at).getTime() / 1000;
-        const gap = thisStart - prevEnd;
+    // Live segment placeholder at top of newest session (below header).
+    if (si === 0) {
+      // Store closed-segment totals for merging with live segment.
+      window._sessionClosedCal = totalCal;
+      window._sessionClosedDist = totalDist;
+      window._sessionClosedDur = totalDur;
+      html += '<div id="activity-live-inner"></div>';
+    }
+
+    session.forEach((seg, segi) => {
+      if (segi > 0) {
+        // Segments are reversed: prev is newer, seg is older.
+        const prev = session[segi - 1];
+        const segEnd = new Date(seg.started_at).getTime() / 1000 + seg.duration_s;
+        const prevStart = new Date(prev.started_at).getTime() / 1000;
+        const gap = prevStart - segEnd;
         if (gap > 5) {
           html += '<div class="text-center text-xs text-gray-600 py-1.5">';
           html += 'paused ' + formatDurationLong(gap);
@@ -545,15 +633,10 @@ function renderClosedSegments(segments) {
       html += renderSegmentCard(seg);
     });
 
-    // Placeholder for live segment inside the last session card.
-    if (si === sessions.length - 1) {
-      html += '<div id="activity-live-inner"></div>';
-    }
-
     html += '</div>';
   });
 
-  // Store last closed segment end time for live segment placement.
+  // Store most recent closed segment end time for live segment placement.
   if (segments.length > 0) {
     const last = segments[segments.length - 1];
     window._lastClosedEnd = new Date(last.started_at).getTime() / 1000 + last.duration_s;
@@ -578,24 +661,35 @@ function renderLiveSegment(seg) {
   const segStart = new Date(seg.started_at).getTime() / 1000;
   const adjacent = window._lastClosedEnd && (segStart - window._lastClosedEnd) < 3600;
 
-  let html = '';
-  // Show pause gap if adjacent and there's a gap > 5s.
+  let html = renderSegmentCard(seg);
+  // Show pause gap below live segment if adjacent to closed segments.
   if (adjacent && window._lastClosedEnd) {
     const gap = segStart - window._lastClosedEnd;
     if (gap > 5) {
-      html += '<div class="flex items-center gap-3 py-2 my-1">';
-      html += '<div class="flex-1 border-t border-dashed border-gray-700"></div>';
-      html += '<span class="text-xs text-gray-600 px-2">paused ' + formatDurationLong(gap) + '</span>';
-      html += '<div class="flex-1 border-t border-dashed border-gray-700"></div>';
+      html += '<div class="text-center text-xs text-gray-600 py-1.5">';
+      html += 'paused ' + formatDurationLong(gap);
       html += '</div>';
     }
   }
-  html += renderSegmentCard(seg);
 
   if (adjacent && innerEl) {
     innerEl.innerHTML = html;
   } else if (outerEl) {
     outerEl.innerHTML = html;
+  }
+
+  // Update the first session's header to include the live segment.
+  const statsEl = document.getElementById('session-stats-0');
+  const endEl = document.getElementById('session-end-0');
+  if (statsEl && seg.moving) {
+    const cal = (window._sessionClosedCal || 0) + seg.calories_kcal;
+    const dist = (window._sessionClosedDist || 0) + seg.distance_m;
+    const dur = (window._sessionClosedDur || 0) + seg.duration_s;
+    statsEl.textContent = cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur);
+  }
+  if (endEl) {
+    const segEnd = new Date(new Date(seg.started_at).getTime() + seg.duration_s * 1000);
+    endEl.textContent = formatTime(segEnd);
   }
 }
 
@@ -606,17 +700,17 @@ function renderSegmentCard(seg) {
     const segStart = new Date(seg.started_at);
     const segEnd = new Date(segStart.getTime() + dur * 1000);
     let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
-    html += '<div class="flex items-center gap-4 text-sm">';
+    html += '<div class="segment-row text-sm">';
     if (seg.open) {
-      html += '<div class="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0 animate-pulse"></div>';
+      html += '<div class="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0 animate-pulse" style="grid-column:1"></div>';
     }
-    html += '<span class="text-gray-400">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
-    html += '<span class="text-white font-medium">' + formatDurationLong(dur) + '</span>';
-    html += '<span class="text-gray-300">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
-    html += '<span class="text-gray-300">' + seg.calories_kcal.toFixed(1) + ' kcal</span>';
-    html += '<span class="text-gray-500">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
-    html += '<span class="text-gray-600 text-xs">MET ' + met.toFixed(1) + '</span>';
-    html += '<span class="text-gray-600 text-xs">' + seg.weight_kg.toFixed(0) + ' kg</span>';
+    html += '<span class="text-gray-400" style="grid-column:2">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
+    html += '<span class="text-white font-medium" style="grid-column:3">' + formatDurationLong(dur) + '</span>';
+    html += '<span class="text-gray-300" style="grid-column:4">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
+    html += '<span class="text-gray-300" style="grid-column:5">' + seg.calories_kcal.toFixed(1) + ' kcal</span>';
+    html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(1) + '</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
     html += '</div>';
     html += '</div>';
     return html;
@@ -666,12 +760,6 @@ const LEADERBOARD_POLL_INTERVAL_MS = 5000;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(proto + '//' + location.host + '/ws/live');
-  const status = document.getElementById('connection-status');
-
-  ws.onopen = () => {
-    status.textContent = 'Connected';
-    status.className = 'text-xs px-6 py-1 text-green-500';
-  };
 
   // WebSocket only fires on state changes (segment open/close/disconnect).
   ws.onmessage = () => {
@@ -681,8 +769,6 @@ function connect() {
   };
 
   ws.onclose = () => {
-    status.textContent = 'Reconnecting...';
-    status.className = 'text-xs px-6 py-1 text-red-400';
     setTimeout(connect, 2000);
   };
 
@@ -692,22 +778,8 @@ function connect() {
 // Leaderboard polls on its own schedule, independent of WebSocket.
 setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
 
-// -- Restore tab from URL hash (runs immediately, before async) --
-const hash = location.hash.slice(1);
-if (hash.startsWith('profile/')) {
-  currentProfileId = hash.split('/')[1] || currentProfileId;
-  showTab('profile');
-} else if (hash === 'profile' && currentProfileId) {
-  showTab('profile');
-} else if (hash.startsWith('activity/')) {
-  currentActivityId = hash.split('/')[1] || loggedInId;
-  showTab('activity');
-} else if (hash === 'activity') {
-  currentActivityId = loggedInId;
-  showTab('activity');
-} else {
-  showTab('leaderboard');
-}
+// -- Init --
+initPage();
 
 connect();
 fetchLeaderboard();
