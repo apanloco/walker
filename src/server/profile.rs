@@ -13,7 +13,6 @@ fn chrono_today() -> String {
         .unwrap()
         .as_secs();
     let days = now / 86400;
-    // Simple date calculation (accurate enough).
     let (y, m, d) = days_to_ymd(days);
     format!("{y}-{m:02}-{d:02}")
 }
@@ -39,40 +38,48 @@ pub fn routes() -> Router<SharedLive> {
 
 async fn get_profile(
     State(ctx): State<SharedLive>,
-    Path(id): Path<String>,
+    Path(id_str): Path<String>,
 ) -> Json<serde_json::Value> {
-    let Some(ref pool) = ctx.db_pool else {
-        return Json(serde_json::json!({"error": "no database"}));
+    let pool = &ctx.db_pool;
+
+    let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
+        return Json(serde_json::json!({"error": "invalid user id"}));
     };
 
-    let user =
-        sqlx::query("SELECT email, display_name, avatar_url, weight_kg, created_at::TEXT FROM users WHERE id = $1")
-            .bind(&id)
-            .fetch_optional(pool.as_ref())
-            .await
-            .ok()
-            .flatten();
+    let user = sqlx::query(
+        "SELECT display_name, avatar_url, weight_kg, created_at::TEXT FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool.as_ref())
+    .await
+    .ok()
+    .flatten();
 
     let Some(user) = user else {
         return Json(serde_json::json!({"error": "user not found"}));
     };
 
-    let email: String = sqlx::Row::get(&user, "email");
     let name: String = sqlx::Row::get(&user, "display_name");
     let avatar: Option<String> = sqlx::Row::get(&user, "avatar_url");
     let weight: f32 = sqlx::Row::get(&user, "weight_kg");
     let member_since: String = sqlx::Row::get(&user, "created_at");
+    let id_str = id.to_string();
 
     // Full year for heatmap + 30 days for stats.
-    let year_history = db::user_history(pool, &email, 365)
-        .await
-        .unwrap_or_default();
-    let streak = db::user_streak(pool, &email).await.unwrap_or(0);
+    let year_history = db::user_history(pool, id, 365).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "user_history query failed");
+        vec![]
+    });
+    let streak = db::user_streak(pool, id).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "user_streak query failed");
+        0
+    });
 
     // All-time totals (could be longer than 365 days).
-    let all_time = db::user_history(pool, &email, 99999)
-        .await
-        .unwrap_or_default();
+    let all_time = db::user_history(pool, id, 99999).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "user_history all_time query failed");
+        vec![]
+    });
     let total_calories: f64 = all_time.iter().map(|d| d.calories_kcal).sum();
     let total_distance: f64 = all_time.iter().map(|d| d.distance_km).sum();
     let total_active: i32 = all_time.iter().map(|d| d.active_secs).sum();
@@ -106,18 +113,17 @@ async fn get_profile(
         .sum();
     let year_cal: f64 = year_history.iter().map(|d| d.calories_kcal).sum();
 
-    // Check if currently walking.
-    let live_status = {
-        let state = ctx.state.read().await;
-        state
-            .users
-            .values()
-            .find(|u| u.id == id)
-            .map(|u| serde_json::json!({"status": u.status(), "speed_mph": u.speed_mph}))
+    // Check if currently walking via open segment in DB.
+    let live_status = match db::get_open_segment(pool, id).await {
+        Ok(Some(seg)) => {
+            let status = if seg.moving { "walking" } else { "idle" };
+            Some(serde_json::json!({"status": status, "speed_kmh": seg.speed_kmh}))
+        }
+        _ => None,
     };
 
     Json(serde_json::json!({
-        "id": id,
+        "id": id_str,
         "name": name,
         "avatar_url": avatar,
         "weight_kg": weight,

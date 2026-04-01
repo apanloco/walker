@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 #[cfg(feature = "client")]
 mod activity;
 #[cfg(feature = "client")]
@@ -82,6 +84,15 @@ enum Command {
         #[arg(long)]
         dev: bool,
     },
+    /// Set your weight (used for calorie calculations)
+    #[cfg(feature = "client")]
+    SetWeight {
+        /// Weight in kg
+        weight_kg: f32,
+        /// Use dev credentials
+        #[arg(long)]
+        dev: bool,
+    },
     /// Run the walker server
     #[cfg(feature = "server")]
     Listen {
@@ -135,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "client")]
         Command::Simulate { speed, count, dev } => simulate(speed, count, dev).await?,
         #[cfg(feature = "client")]
+        Command::SetWeight { weight_kg, dev } => set_weight(weight_kg, dev).await?,
+        #[cfg(feature = "client")]
         Command::Logout { dev } => {
             auth::logout(dev)?;
         }
@@ -172,7 +185,9 @@ async fn main() -> anyhow::Result<()> {
                 github_client_secret,
                 google_client_id,
                 google_client_secret,
-                database_url,
+                database_url: database_url.or_else(|| {
+                    dev.then(|| "postgres://postgres:walker@localhost/walker".to_string())
+                }),
                 dev,
             })
             .await?;
@@ -365,23 +380,43 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
 
             match profile.parse_notification(&notification.uuid, &notification.value) {
                 Some(TreadmillEvent::Data(data)) => {
-                    if let Some(raw_steps) = data.steps {
-                        step_tracker.update(raw_steps);
+                    // Pausing/Paused = belt stopping. Reset everything.
+                    if matches!(
+                        data.status,
+                        TreadmillStatus::Pausing | TreadmillStatus::Paused
+                    ) {
+                        step_tracker.reset();
+                        activity_tracker.reset();
+                        display::print_data_row(
+                            &data,
+                            step_tracker.total,
+                            &activity_tracker.state(),
+                        );
+                        if let Some(ref mut rpt) = server_reporter {
+                            rpt.send_stopped();
+                        }
+                        lines_since_header += 1;
+                        continue;
                     }
+                    let steps = data.steps.and_then(|raw| step_tracker.update(raw));
                     let treadmill_running = data.status == TreadmillStatus::Running;
-                    let activity = activity_tracker.update(step_tracker.total, treadmill_running);
+                    let activity =
+                        activity_tracker.update(steps, treadmill_running, data.speed_kmh);
                     display::print_data_row(&data, step_tracker.total, &activity);
                     if let Some(ref mut rpt) = server_reporter {
-                        rpt.maybe_send(&activity, data.speed_mph);
+                        rpt.maybe_send(&activity, data.speed_kmh);
                     }
                 }
                 Some(TreadmillEvent::StatusOnly(status)) => {
+                    // All non-Running statuses send stopped to close the segment.
+                    if let Some(ref mut rpt) = server_reporter {
+                        rpt.send_stopped();
+                    }
                     // Standby/Off = session ended, step counter will reset to 0.
                     // Reset trackers so the jump isn't mistaken for a 10k wrap.
-                    // Don't reset on Pausing/Paused — those are mid-session.
                     if matches!(status, TreadmillStatus::Standby | TreadmillStatus::Off) {
-                        step_tracker.on_reconnect();
-                        activity_tracker.on_reconnect();
+                        step_tracker.reset();
+                        activity_tracker.reset();
                     }
                     display::print_status_row(&status, &notification.value);
                 }
@@ -400,11 +435,33 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
             "{}",
             "Device disconnected. Reconnecting in 3 seconds...".yellow()
         );
-        step_tracker.on_reconnect();
-        activity_tracker.on_reconnect();
+        step_tracker.reset();
+        activity_tracker.reset();
         let _ = device.disconnect().await;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
+}
+
+#[cfg(feature = "client")]
+async fn set_weight(weight_kg: f32, dev: bool) -> anyhow::Result<()> {
+    let config = auth::load(dev)?
+        .ok_or_else(|| anyhow::anyhow!("Not logged in. Run 'walker login' first."))?;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .put(format!("{}/api/weight", config.server))
+        .header("Authorization", format!("Bearer {}", config.token))
+        .json(&serde_json::json!({"weight_kg": weight_kg}))
+        .send()
+        .await?;
+
+    if res.status().is_success() {
+        println!("  Weight set to {weight_kg} kg");
+    } else {
+        anyhow::bail!("Server rejected weight update (status {})", res.status());
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "client")]
@@ -424,13 +481,13 @@ async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
         let url = format!("{server}/api/update");
         let auth_header = format!("Bearer {}", config.token);
         info!(server = %server, user = %config.display_name, speed = %speed, "Simulating treadmill");
-        println!("  Simulating: {speed} mph — press Ctrl+C to stop");
+        println!("  Simulating: {speed} km/h — press Ctrl+C to stop");
 
         loop {
             let _ = client
                 .post(&url)
                 .header("Authorization", &auth_header)
-                .json(&serde_json::json!({"moving": true, "speed_mph": speed}))
+                .json(&serde_json::json!({"state": "walking", "speed_kmh": speed}))
                 .send()
                 .await;
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -453,9 +510,9 @@ async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
             .await?;
 
         let token = res["token"].as_str().unwrap_or("").to_string();
-        // Each user gets a distinct base speed: 1.0 to 5.0 mph spread across users.
-        let base_speed = 1.0 + (i as f32 / count.max(2) as f32) * 4.0;
-        println!("  Registered: {name} ({email}) @ {base_speed:.1} mph base");
+        // Each user gets a distinct base speed: 1.5 to 8.0 km/h spread across users.
+        let base_speed = 1.5 + (i as f32 / count.max(2) as f32) * 6.5;
+        println!("  Registered: {name} ({email}) @ {base_speed:.1} km/h base");
         tokens.push((name.to_string(), token, base_speed));
     }
 
@@ -465,14 +522,14 @@ async fn simulate(speed: f32, count: u32, dev: bool) -> anyhow::Result<()> {
 
     loop {
         for (name, token, base_speed) in &tokens {
-            // Vary ±0.5 mph around each user's base speed.
-            let variation = rand::RngExt::random_range(&mut rng, -5..=5) as f32 * 0.1;
+            // Vary ±0.8 km/h around each user's base speed.
+            let variation = rand::RngExt::random_range(&mut rng, -8..=8) as f32 * 0.1;
             let user_speed = (base_speed + variation).max(0.5);
 
             let _ = client
                 .post(&url)
                 .header("Authorization", format!("Bearer {token}"))
-                .json(&serde_json::json!({"moving": true, "speed_mph": user_speed}))
+                .json(&serde_json::json!({"state": "walking", "speed_kmh": user_speed}))
                 .send()
                 .await;
 

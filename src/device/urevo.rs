@@ -76,7 +76,7 @@ impl TreadmillProfile for UrevoProfile {
         if data.len() == 19 && data[0] == 0x02 && data[1] == 0x51 {
             return Some(TreadmillEvent::Data(TreadmillData {
                 status: parse_status(data[2]),
-                speed_mph: data[3] as f32 * 0.1,
+                speed_kmh: data[3] as f32 * 0.1,
                 duration_secs: u16::from_le_bytes([data[5], data[6]]),
                 distance_km: u16::from_le_bytes([data[7], data[8]]) as f32 * 0.01,
                 calories_kcal: u16::from_le_bytes([data[9], data[10]]) as f32 * 0.1,

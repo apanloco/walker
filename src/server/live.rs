@@ -6,29 +6,42 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
-use tracing::{info, warn};
+use tokio::sync::broadcast;
+use tracing::{error, info, warn};
 
-use super::state::{LiveBroadcast, LiveState};
+use super::db;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct TokenUser {
-    pub id: String,
+    pub id: uuid::Uuid,
     pub email: String,
     pub display_name: String,
     pub avatar_url: Option<String>,
 }
 
-/// Token → user info lookup.
-pub type TokenMap = Arc<RwLock<std::collections::HashMap<String, TokenUser>>>;
+#[derive(Serialize, Clone)]
+pub struct LiveBroadcast {
+    pub users: Vec<LiveUser>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct LiveUser {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub status: String,
+    pub speed_kmh: f64,
+    pub calories_kcal: f64,
+    pub distance_m: f64,
+    pub active_secs: u64,
+}
 
 pub struct LiveContext {
-    pub state: Arc<RwLock<LiveState>>,
-    pub tokens: TokenMap,
     pub broadcast_tx: broadcast::Sender<LiveBroadcast>,
-    pub db_pool: Option<Arc<sqlx::PgPool>>,
+    pub db_pool: Arc<sqlx::PgPool>,
     pub dev_mode: bool,
 }
 
@@ -36,90 +49,8 @@ pub type SharedLive = Arc<LiveContext>;
 
 pub fn routes() -> Router<SharedLive> {
     Router::new()
-        .route("/api/update", post(handle_update))
         .route("/api/simulate/register", post(register_simulated_user))
         .route("/ws/live", get(ws_live))
-}
-
-// -- POST /api/update --
-
-#[derive(Deserialize)]
-struct UpdatePayload {
-    moving: bool,
-    speed_mph: f64,
-}
-
-async fn handle_update(
-    State(ctx): State<SharedLive>,
-    headers: axum::http::HeaderMap,
-    Json(payload): Json<UpdatePayload>,
-) -> impl IntoResponse {
-    let Some(token) = extract_bearer_token(&headers) else {
-        return StatusCode::UNAUTHORIZED;
-    };
-
-    let tokens = ctx.tokens.read().await;
-    let Some(user) = tokens.get(token) else {
-        return StatusCode::UNAUTHORIZED;
-    };
-    let user = user.clone();
-    drop(tokens);
-
-    // Load today's totals from DB if this is a new user in memory.
-    let initial_stats = {
-        let state = ctx.state.read().await;
-        if state.users.contains_key(&user.email) {
-            (0, 0, 0)
-        } else {
-            drop(state);
-            if let Some(ref pool) = ctx.db_pool {
-                super::db::load_daily_stats(pool, &user.email)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|(c, a, i)| (c as u64, a as u64, i as u64))
-                    .unwrap_or((0, 0, 0))
-            } else {
-                (0, 0, 0)
-            }
-        }
-    };
-
-    // Compute calories, update state.
-    let (delta, broadcast) = {
-        let mut state = ctx.state.write().await;
-        let delta = state.process_update(
-            &user.id,
-            &user.email,
-            &user.display_name,
-            user.avatar_url.clone(),
-            payload.moving,
-            payload.speed_mph,
-            initial_stats,
-        );
-        let broadcast = state.snapshot();
-        (delta, broadcast)
-    };
-
-    // Write delta to DB (accumulates into daily total).
-    if let Some(ref pool) = ctx.db_pool
-        && !delta.is_empty()
-    {
-        let _ = super::db::accumulate_daily_stats(
-            pool,
-            &user.email,
-            delta.calories_ucal,
-            delta.active_secs,
-            delta.idle_secs,
-            delta.distance_m,
-        )
-        .await;
-    }
-
-    // Broadcast to all viewers.
-    let _ = ctx.broadcast_tx.send(broadcast);
-
-    StatusCode::OK
 }
 
 // -- POST /api/simulate/register --
@@ -148,34 +79,19 @@ async fn register_simulated_user(
         );
     }
     let token = format!("sim-{}", payload.email);
-    let id = format!("sim-{}", payload.name);
 
-    // Register in DB if available.
-    if let Some(ref pool) = ctx.db_pool {
-        let _ = super::db::upsert_user(pool, &payload.email, &payload.name, None).await;
-        let _ = super::db::store_token(pool, &token, &payload.email).await;
+    let pool = &ctx.db_pool;
+    if let Err(e) = db::upsert_user(pool, &payload.email, &payload.name, None).await {
+        error!(error = %e, "Failed to upsert simulated user");
+    }
+    let id = db::get_user_id(pool, &payload.email)
+        .await
+        .unwrap_or_else(|_| uuid::Uuid::new_v4());
+    if let Err(e) = db::store_token(pool, &token, id).await {
+        error!(error = %e, "Failed to store simulated user token");
     }
 
-    // Register in token map.
-    ctx.tokens.write().await.insert(
-        token.clone(),
-        TokenUser {
-            id,
-            email: payload.email,
-            display_name: payload.name,
-            avatar_url: None,
-        },
-    );
-
     (StatusCode::OK, Json(SimulateRegisterResponse { token }))
-}
-
-fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
-    headers
-        .get("authorization")?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
 }
 
 // -- WebSocket /ws/live --
@@ -189,12 +105,13 @@ async fn handle_ws_live(mut socket: WebSocket, ctx: SharedLive) {
     info!("Live viewer connected");
 
     // Send current state immediately so the dashboard doesn't start empty.
-    {
-        let state = ctx.state.read().await;
-        let snapshot = state.snapshot();
-        if let Ok(json) = serde_json::to_string(&snapshot) {
-            let _ = socket.send(Message::Text(json.into())).await;
+    match db::live_snapshot(&ctx.db_pool).await {
+        Ok(snapshot) => {
+            if let Ok(json) = serde_json::to_string(&snapshot) {
+                let _ = socket.send(Message::Text(json.into())).await;
+            }
         }
+        Err(e) => error!(error = %e, "Failed to build initial live snapshot"),
     }
 
     loop {
@@ -218,17 +135,25 @@ async fn handle_ws_live(mut socket: WebSocket, ctx: SharedLive) {
 }
 
 /// Lightweight timer: checks for disconnected users every 5 seconds
-/// and broadcasts updated state if any status changed.
+/// and closes their open segments.
 pub fn spawn_disconnect_checker(ctx: SharedLive) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             interval.tick().await;
-            let broadcast = {
-                let state = ctx.state.read().await;
-                state.snapshot()
-            };
-            let _ = ctx.broadcast_tx.send(broadcast);
+
+            // Close segments for disconnected users (no heartbeat in 5s).
+            if let Err(e) = db::close_stale_segments(&ctx.db_pool, 5.0).await {
+                error!(error = %e, "Disconnect checker failed to close stale segments");
+            }
+
+            // Broadcast current state to all viewers.
+            match db::live_snapshot(&ctx.db_pool).await {
+                Ok(broadcast) => {
+                    let _ = ctx.broadcast_tx.send(broadcast);
+                }
+                Err(e) => error!(error = %e, "Disconnect checker failed to build live snapshot"),
+            }
         }
     });
 }

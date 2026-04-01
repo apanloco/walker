@@ -64,16 +64,15 @@ pub fn print_data_row(data: &TreadmillData, total_steps: u64, activity: &Activit
         activity.idle_duration_secs / 60,
         activity.idle_duration_secs % 60
     );
-    let speed = format!("{:.1} mph", data.speed_mph);
+    let speed = format!("{:.1} km/h", data.speed_kmh);
     let distance = format!("{:.2} km", data.distance_km);
     let steps = format!("{total_steps}");
 
-    let activity_col = if activity.moving {
-        pad_color("WALKING", 12, colored::Color::Green, true)
-    } else if data.status == TreadmillStatus::Running {
-        pad_color("IDLE", 12, colored::Color::Red, true)
-    } else {
-        pad_dimmed("—", 12)
+    use crate::activity::ActivityPhase;
+    let activity_col = match activity.phase {
+        ActivityPhase::Walking => pad_color("WALKING", 12, colored::Color::Green, true),
+        ActivityPhase::Idle => pad_color("IDLE", 12, colored::Color::Red, true),
+        ActivityPhase::Init => pad_dimmed("—", 12),
     };
 
     let status_col = if data.status == TreadmillStatus::Running {

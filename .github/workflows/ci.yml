@@ -26,6 +26,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run cargo deny
+        run: |
+          cargo install --locked cargo-deny
+          cargo deny check
+
   test:
     name: Test (${{ matrix.os }})
     needs: check

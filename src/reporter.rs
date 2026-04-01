@@ -15,8 +15,8 @@ pub struct ServerReporter {
 
 #[derive(Clone, PartialEq)]
 struct SentState {
-    moving: bool,
-    speed_mph_x10: i32, // Compare at 0.1 resolution to avoid float issues.
+    state: &'static str,
+    speed_kmh_x10: i32, // Compare at 0.1 resolution to avoid float issues.
 }
 
 impl ServerReporter {
@@ -32,10 +32,19 @@ impl ServerReporter {
     }
 
     /// Call on every data update. Only actually sends when needed.
-    pub fn maybe_send(&mut self, activity: &ActivityState, speed_mph: f32) {
+    pub fn maybe_send(&mut self, activity: &ActivityState, speed_kmh: f32) {
+        // Don't report during INIT phase — state is unconfirmed.
+        if !activity.is_confirmed() {
+            return;
+        }
+        let state_str = if activity.is_walking() {
+            "walking"
+        } else {
+            "idle"
+        };
         let current = SentState {
-            moving: activity.moving,
-            speed_mph_x10: (speed_mph * 10.0) as i32,
+            state: state_str,
+            speed_kmh_x10: (speed_kmh * 10.0) as i32,
         };
 
         let should_send = match (&self.last_sent, &self.last_send_time) {
@@ -43,10 +52,8 @@ impl ServerReporter {
             (None, _) => true,
             // State changed → send immediately.
             (Some(prev), _) if *prev != current => true,
-            // Heartbeat: walking and enough time elapsed.
-            (_, Some(last)) if activity.moving => {
-                last.elapsed().as_secs_f64() >= self.heartbeat_secs
-            }
+            // Heartbeat: enough time elapsed.
+            (_, Some(last)) => last.elapsed().as_secs_f64() >= self.heartbeat_secs,
             _ => false,
         };
 
@@ -57,10 +64,23 @@ impl ServerReporter {
         self.last_sent = Some(current);
         self.last_send_time = Some(Instant::now());
 
+        self.fire_send(state_str, speed_kmh as f64);
+    }
+
+    /// Send a "stopped" signal — treadmill went to standby/off.
+    pub fn send_stopped(&mut self) {
+        self.last_sent = Some(SentState {
+            state: "stopped",
+            speed_kmh_x10: 0,
+        });
+        self.last_send_time = Some(Instant::now());
+        self.fire_send("stopped", 0.0);
+    }
+
+    fn fire_send(&self, state: &str, speed_kmh: f64) {
         let url = format!("{}/api/update", self.server_url);
         let token = self.token.clone();
-        let moving = activity.moving;
-        let speed = speed_mph as f64;
+        let state = state.to_string();
         let client = self.client.clone();
 
         // Fire-and-forget — don't block the BLE loop.
@@ -69,8 +89,8 @@ impl ServerReporter {
                 .post(&url)
                 .header("Authorization", format!("Bearer {token}"))
                 .json(&serde_json::json!({
-                    "moving": moving,
-                    "speed_mph": speed,
+                    "state": state,
+                    "speed_kmh": speed_kmh,
                 }))
                 .send()
                 .await;

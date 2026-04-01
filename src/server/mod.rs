@@ -1,10 +1,11 @@
+pub mod activity;
 pub mod auth;
 pub mod dashboard;
 pub mod db;
 pub mod leaderboard;
 pub mod live;
 pub mod profile;
-pub mod state;
+pub mod update;
 
 use axum::Router;
 use std::sync::Arc;
@@ -52,31 +53,22 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     if config.database_url.is_some() {
         info!("  Database: configured");
     } else {
-        tracing::warn!("  Database: not configured (set DATABASE_URL). Running in-memory only.");
+        anyhow::bail!("DATABASE_URL is required. Set it to a PostgreSQL connection string.");
     }
     if config.dev {
         info!("  Dev mode: enabled");
     }
 
-    let token_map: live::TokenMap = Arc::new(RwLock::new(std::collections::HashMap::new()));
     let (broadcast_tx, _) = broadcast::channel(64);
 
     // Connect to database.
-    let pool = if let Some(ref db_url) = config.database_url {
-        let pool = db::connect(db_url).await?;
-        let tokens = db::load_tokens(&pool).await?;
-        let count = tokens.len();
-        let mut map = token_map.write().await;
-        for (token, user) in tokens {
-            map.insert(token, user);
-        }
-        drop(map);
-        info!("Loaded {count} token(s) from database");
-        Some(Arc::new(pool))
-    } else {
-        info!("No DATABASE_URL — running without persistence");
-        None
-    };
+    let pool = Arc::new(db::connect(config.database_url.as_ref().unwrap()).await?);
+
+    // Close stale open segments from any previous crash (1 minute threshold).
+    let closed = db::close_stale_segments(&pool, 60.0).await.unwrap_or(0);
+    if closed > 0 {
+        info!("Closed {closed} stale open segment(s) from previous run");
+    }
 
     // Dev mode: create a test token.
     if config.dev {
@@ -84,27 +76,18 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         let dev_email = "dev@walker.local";
         let dev_name = "Dev User";
 
-        if let Some(ref pool) = pool {
-            db::upsert_user(pool, dev_email, dev_name, None).await?;
-            let _ = db::store_token(pool, dev_token, dev_email).await;
-            db::seed_dev_history(pool, dev_email).await?;
-        }
+        db::upsert_user(&pool, dev_email, dev_name, None).await?;
+        let id = db::get_user_id(&pool, dev_email).await?;
+        let _ = db::store_token(&pool, dev_token, id).await;
+        db::seed_dev_history(&pool, id).await?;
 
-        token_map.write().await.insert(
-            dev_token.to_string(),
-            live::TokenUser {
-                id: "dev-user".to_string(),
-                email: dev_email.to_string(),
-                display_name: dev_name.to_string(),
-                avatar_url: None,
-            },
+        info!(
+            "Dev mode: test token = '{dev_token}', dashboard login: http://localhost:{}/dev/login",
+            config.port
         );
-        info!("Dev mode: test token = '{dev_token}'");
     }
 
     let live_ctx = Arc::new(live::LiveContext {
-        state: Arc::new(RwLock::new(state::LiveState::new())),
-        tokens: token_map.clone(),
         broadcast_tx,
         db_pool: pool.clone(),
         dev_mode: config.dev,
@@ -116,19 +99,42 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         config.github_client_secret,
         config.google_client_id,
         config.google_client_secret,
-        token_map,
         pool.clone(),
     )));
 
     // Lightweight timer for disconnect detection.
     live::spawn_disconnect_checker(live_ctx.clone());
 
-    let app = Router::new()
+    let mut app = Router::new()
         .merge(auth::routes().with_state(auth_state))
+        .merge(update::routes().with_state(live_ctx.clone()))
         .merge(live::routes().with_state(live_ctx.clone()))
         .merge(leaderboard::routes().with_state(live_ctx.clone()))
-        .merge(profile::routes().with_state(live_ctx))
+        .merge(profile::routes().with_state(live_ctx.clone()))
+        .merge(activity::routes().with_state(live_ctx))
         .merge(dashboard::routes(config.dev));
+
+    // In dev mode, inject walker_id cookie on every response so the dashboard
+    // works without OAuth. No manual /dev/login step needed.
+    if config.dev {
+        let dev_user_id = db::get_user_id(&pool, "dev@walker.local")
+            .await
+            .ok()
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let cookie_value = format!("walker_id={dev_user_id}; Path=/; SameSite=Lax");
+        app = app.layer(axum::middleware::map_response(
+            move |mut response: axum::response::Response| {
+                let cookie = cookie_value.clone();
+                async move {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
+                    response
+                }
+            },
+        ));
+    }
 
     let addr = format!("0.0.0.0:{}", config.port);
     info!("Walker server listening on http://{addr}");

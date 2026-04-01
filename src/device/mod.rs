@@ -42,7 +42,7 @@ impl TreadmillStatus {
 #[derive(Debug, Clone)]
 pub struct TreadmillData {
     pub status: TreadmillStatus,
-    pub speed_mph: f32,
+    pub speed_kmh: f32,
     pub duration_secs: u16,
     pub distance_km: f32,
     #[allow(dead_code)] // Will be used for server reporting.
@@ -83,12 +83,13 @@ impl StepTracker {
 
     /// Call on reconnect — clears the previous raw value so the next reading
     /// becomes a new baseline without triggering a false wrap.
-    pub fn on_reconnect(&mut self) {
+    pub fn reset(&mut self) {
         self.prev_raw = None;
     }
 
-    /// Feed a new raw step value. Returns (total_steps, wrap_count).
-    pub fn update(&mut self, raw_steps: u16) -> (u64, u32) {
+    /// Feed a new raw step value. Returns None when establishing baseline
+    /// (first reading after reset), Some(total) when real step data is available.
+    pub fn update(&mut self, raw_steps: u16) -> Option<u64> {
         match self.prev_raw {
             Some(prev) if raw_steps < prev => {
                 // Wrap detected.
@@ -102,16 +103,21 @@ impl StepTracker {
                     total_steps = self.total,
                     "Step counter wrapped!"
                 );
+                self.prev_raw = Some(raw_steps);
+                Some(self.total)
             }
             Some(prev) => {
                 self.total += (raw_steps - prev) as u64;
+                self.prev_raw = Some(raw_steps);
+                Some(self.total)
             }
             None => {
+                // First reading after reset — set baseline, no real data yet.
                 self.total = raw_steps as u64;
+                self.prev_raw = Some(raw_steps);
+                None
             }
         }
-        self.prev_raw = Some(raw_steps);
-        (self.total, self.wrap_count)
     }
 }
 
