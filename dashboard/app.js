@@ -428,6 +428,7 @@ function renderProfile(p) {
 
 let currentActivityId = null;
 let activityWs = null;
+let lastLiveSegment = null;
 
 function showActivity(id) {
   currentActivityId = id || loggedInId;
@@ -438,7 +439,12 @@ function fetchActivityClosed() {
   if (!currentActivityId) return;
   fetch('/api/activity/' + encodeURIComponent(currentActivityId))
     .then(r => r.json())
-    .then(data => renderClosedSegments(data.segments || []))
+    .then(data => {
+      renderClosedSegments(data.segments || []);
+      // Re-render live segment — renderClosedSegments rebuilds the DOM
+      // which destroys #activity-live-inner content.
+      renderLiveSegment(lastLiveSegment);
+    })
     .catch(() => {});
 }
 
@@ -450,6 +456,7 @@ function connectActivityWs() {
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
+      lastLiveSegment = data.segment;
       renderLiveSegment(data.segment);
     } catch (_) {}
   };
@@ -474,6 +481,7 @@ function disconnectActivityWs() {
     activityWs = null;
     ws.close();
   }
+  lastLiveSegment = null;
 }
 
 function renderClosedSegments(segments) {
