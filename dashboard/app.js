@@ -35,9 +35,15 @@ const loggedInId = getCookie('walker_id');
 let currentProfileId = new URLSearchParams(location.search).get('id') || loggedInId;
 
 const navUser = document.getElementById('nav-user');
+function logout() {
+  document.cookie = 'walker_id=; Path=/; Max-Age=0';
+  location.reload();
+}
+
 if (loggedInId) {
   navUser.innerHTML = '<a href="javascript:void(0)" onclick="showActivity(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Activity</a>' +
-    '<a href="javascript:void(0)" onclick="showProfile(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Profile</a>';
+    '<a href="javascript:void(0)" onclick="showProfile(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Profile</a>' +
+    '<a href="javascript:void(0)" onclick="logout()" class="text-gray-500 hover:text-gray-400 font-medium">Logout</a>';
 } else {
   navUser.innerHTML = '<a href="/auth/web/github" class="text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a>';
 }
