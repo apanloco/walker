@@ -33,7 +33,7 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
     <span class="text-walker-500 font-bold text-lg mr-4 py-3">Walker</span>
     <a id="tab-leaderboard" class="nav-tab active" onclick="showTab('leaderboard')">Leaderboard</a>
   </div>
-  <div id="nav-user" class="text-sm text-gray-400"></div>
+  <div id="nav-user" class="text-sm text-gray-400 flex items-center gap-3"></div>
 </nav>
 
 <style>
@@ -67,9 +67,16 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
   </div>
 </div>
 
-<!-- Me page -->
+<!-- Profile page -->
 <div id="page-profile" class="page px-6 pb-8 hidden">
   <div id="profile-content" class="mt-4"></div>
+</div>
+
+<!-- Activity page -->
+<div id="page-activity" class="page px-6 pb-8 hidden">
+  <h2 class="text-lg font-bold text-white mt-4 mb-4">Today's Activity</h2>
+  <div id="activity-closed"></div>
+  <div id="activity-live" class="mt-2"></div>
 </div>
 
 <script src="/app.js"></script>

@@ -24,10 +24,7 @@ pub struct ServerState {
     pub base_url: String,
     /// Pending device code authorizations.
     pub device_codes: HashMap<String, DeviceAuth>,
-    /// Shared token map: token → user info. Used by live endpoints to authenticate.
-    pub token_map: super::live::TokenMap,
-    /// Database pool (optional).
-    pub db_pool: Option<std::sync::Arc<sqlx::PgPool>>,
+    pub db_pool: std::sync::Arc<sqlx::PgPool>,
 }
 
 pub struct DeviceAuth {
@@ -54,8 +51,7 @@ impl ServerState {
         github_client_secret: Option<String>,
         google_client_id: Option<String>,
         google_client_secret: Option<String>,
-        token_map: super::live::TokenMap,
-        db_pool: Option<std::sync::Arc<sqlx::PgPool>>,
+        db_pool: std::sync::Arc<sqlx::PgPool>,
     ) -> Self {
         Self {
             github_client_id,
@@ -64,7 +60,6 @@ impl ServerState {
             google_client_secret,
             base_url,
             device_codes: HashMap::new(),
-            token_map,
             db_pool,
         }
     }
@@ -356,21 +351,18 @@ async fn github_callback(
     // Web dashboard login: set cookie, redirect to /.
     if flow == "web" {
         let s = state.read().await;
-        let user_id = if let Some(ref pool) = s.db_pool {
-            let _ = super::db::upsert_user(
-                pool,
-                &auth_user.email,
-                &auth_user.display_name,
-                auth_user.avatar_url.as_deref(),
-            )
-            .await;
-            super::db::get_user_id(pool, &email)
-                .await
-                .unwrap_or_else(|_| email.clone())
-        } else {
-            email.clone()
-        };
-        return set_cookie_and_redirect(&user_id);
+        let pool = &s.db_pool;
+        let _ = super::db::upsert_user(
+            pool,
+            &auth_user.email,
+            &auth_user.display_name,
+            auth_user.avatar_url.as_deref(),
+        )
+        .await;
+        let user_id = super::db::get_user_id(pool, &email)
+            .await
+            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+        return set_cookie_and_redirect(&user_id.to_string());
     }
 
     // CLI device code flow: complete the device auth.
@@ -481,21 +473,18 @@ async fn google_callback(
 
     if flow == "web" {
         let s = state.read().await;
-        let user_id = if let Some(ref pool) = s.db_pool {
-            let _ = super::db::upsert_user(
-                pool,
-                &auth_user.email,
-                &auth_user.display_name,
-                auth_user.avatar_url.as_deref(),
-            )
-            .await;
-            super::db::get_user_id(pool, &email)
-                .await
-                .unwrap_or_else(|_| email.clone())
-        } else {
-            email.clone()
-        };
-        return set_cookie_and_redirect(&user_id);
+        let pool = &s.db_pool;
+        let _ = super::db::upsert_user(
+            pool,
+            &auth_user.email,
+            &auth_user.display_name,
+            auth_user.avatar_url.as_deref(),
+        )
+        .await;
+        let user_id = super::db::get_user_id(pool, &email)
+            .await
+            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+        return set_cookie_and_redirect(&user_id.to_string());
     }
 
     complete_auth(&state, &flow, auth_user)
@@ -522,35 +511,16 @@ async fn complete_auth(state: &SharedState, user_code: &str, auth_user: AuthUser
     }
 
     if found {
-        // Persist to DB if available, and get user's public ID.
-        let user_id = if let Some(ref pool) = state.db_pool {
-            let _ = super::db::upsert_user(
-                pool,
-                &email,
-                &display_name,
-                auth_user.avatar_url.as_deref(),
-            )
-            .await;
-            let _ = super::db::store_token(pool, &walker_token, &email).await;
-            super::db::get_user_id(pool, &email)
-                .await
-                .unwrap_or_else(|_| email.clone())
-        } else {
-            uuid::Uuid::new_v4().to_string()
-        };
+        // Persist to DB.
+        let pool = &state.db_pool;
+        let _ =
+            super::db::upsert_user(pool, &email, &display_name, auth_user.avatar_url.as_deref())
+                .await;
+        let id = super::db::get_user_id(pool, &email)
+            .await
+            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let _ = super::db::store_token(pool, &walker_token, id).await;
 
-        // Register token in the shared map so /api/update can authenticate.
-        let mut tokens = state.token_map.write().await;
-        tokens.insert(
-            walker_token,
-            super::live::TokenUser {
-                id: user_id,
-                email,
-                display_name: display_name.clone(),
-                avatar_url: auth_user.avatar_url.clone(),
-            },
-        );
-        drop(tokens);
         info!(user = %display_name, provider = %auth_user.provider, "User authenticated");
         Html(format!(
             r#"<!DOCTYPE html>

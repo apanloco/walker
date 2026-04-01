@@ -1,5 +1,3 @@
-const LEADERBOARD_REFRESH_DELAY_MS = 0;
-
 // -- Tab navigation --
 
 function showTab(name) {
@@ -12,7 +10,14 @@ function showTab(name) {
   if (name === 'profile') {
     location.hash = 'profile/' + (currentProfileId || '');
     fetchProfile();
+  } else if (name === 'activity') {
+    // Don't put own ID in URL — use bare #activity for own activity.
+    location.hash = (currentActivityId && currentActivityId !== loggedInId)
+      ? 'activity/' + currentActivityId : 'activity';
+    fetchActivityClosed();
+    startActivityPolling();
   } else {
+    stopActivityPolling();
     location.hash = name;
   }
 }
@@ -31,7 +36,8 @@ let currentProfileId = new URLSearchParams(location.search).get('id') || loggedI
 
 const navUser = document.getElementById('nav-user');
 if (loggedInId) {
-  navUser.innerHTML = '<a href="javascript:void(0)" onclick="showProfile(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Profile</a>';
+  navUser.innerHTML = '<a href="javascript:void(0)" onclick="showActivity(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Activity</a>' +
+    '<a href="javascript:void(0)" onclick="showProfile(\'' + loggedInId + '\')" class="text-walker-500 hover:text-walker-600 font-medium">Profile</a>';
 } else {
   navUser.innerHTML = '<a href="/auth/web/github" class="text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a>';
 }
@@ -48,7 +54,7 @@ function rankBadge(i) {
 function statusIndicator(e) {
   if (e.status === 'walking') {
     return '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>' +
-      '<span class="text-green-400 text-xs">' + e.speed_mph.toFixed(1) + ' mph</span>';
+      '<span class="text-green-400 text-xs">' + e.speed_kmh.toFixed(1) + ' km/h</span>';
   }
   if (e.status === 'idle') {
     return '<span class="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-1.5"></span>' +
@@ -314,7 +320,7 @@ function renderProfile(p) {
   // Live status badge.
   let liveBadge = '';
   if (p.live && p.live.status === 'walking') {
-    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400 text-sm font-medium">Walking at ' + p.live.speed_mph.toFixed(1) + ' mph</span></div>';
+    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400 text-sm font-medium">Walking at ' + p.live.speed_kmh.toFixed(1) + ' km/h</span></div>';
   } else if (p.live && p.live.status === 'idle') {
     liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500"></span><span class="text-yellow-500 text-sm">Idle</span></div>';
   }
@@ -395,7 +401,7 @@ function renderProfile(p) {
 
     <!-- Heatmap -->
     <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8 overflow-visible">
-      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Walking Activity</h3>
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Daily Heatmap</h3>
       ${buildHeatmap(p.heatmap)}
     </div>
 
@@ -412,7 +418,226 @@ function renderProfile(p) {
   if (window.twemoji) twemoji.parse(el);
 }
 
-// -- WebSocket + polling --
+// -- Activity page --
+
+let currentActivityId = null;
+let activityLiveInterval = null;
+
+function showActivity(id) {
+  currentActivityId = id || loggedInId;
+  showTab('activity');
+}
+
+function fetchActivityClosed() {
+  if (!currentActivityId) return;
+  fetch('/api/activity/' + encodeURIComponent(currentActivityId))
+    .then(r => r.json())
+    .then(data => {
+      renderClosedSegments(data.segments || []);
+      fetchActivityCurrent(); // Also refresh live segment.
+    })
+    .catch(() => {});
+}
+
+function fetchActivityCurrent() {
+  if (!currentActivityId) return;
+  fetch('/api/activity/' + encodeURIComponent(currentActivityId) + '/current')
+    .then(r => r.json())
+    .then(data => renderLiveSegment(data.segment))
+    .catch(() => {});
+}
+
+function startActivityPolling() {
+  stopActivityPolling();
+  fetchActivityCurrent();
+  activityLiveInterval = setInterval(fetchActivityCurrent, 1000);
+}
+
+function stopActivityPolling() {
+  if (activityLiveInterval) {
+    clearInterval(activityLiveInterval);
+    activityLiveInterval = null;
+  }
+}
+
+function renderClosedSegments(segments) {
+  const el = document.getElementById('activity-closed');
+  if (!el) return;
+
+  if (segments.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+
+  // Group segments into sessions (gap > 60 min = separate session).
+  const sessions = [];
+  let currentSession = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (currentSession.length > 0) {
+      const prev = currentSession[currentSession.length - 1];
+      const prevEnd = new Date(prev.started_at).getTime() / 1000 + prev.duration_s;
+      const thisStart = new Date(seg.started_at).getTime() / 1000;
+      if (thisStart - prevEnd > 3600) {
+        sessions.push(currentSession);
+        currentSession = [];
+      }
+    }
+    currentSession.push(seg);
+  }
+  if (currentSession.length > 0) sessions.push(currentSession);
+
+  let html = '';
+
+  sessions.forEach((session, si) => {
+    if (si > 0) html += '<div class="my-6"></div>';
+
+    const sessionStart = new Date(session[0].started_at);
+    const lastSeg = session[session.length - 1];
+    const sessionEnd = new Date(new Date(lastSeg.started_at).getTime() + lastSeg.duration_s * 1000);
+    const totalCal = session.filter(s => s.moving).reduce((sum, s) => sum + s.calories_kcal, 0);
+    const totalDist = session.filter(s => s.moving).reduce((sum, s) => sum + s.distance_m, 0);
+    const totalDur = session.filter(s => s.moving).reduce((sum, s) => sum + s.duration_s, 0);
+
+    html += '<div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-4">';
+    html += '<div class="flex items-center justify-between mb-4">';
+    html += '<div class="text-sm text-gray-400">' + formatDate(sessionStart) + ' · ' + formatTime(sessionStart) + ' – ' + formatTime(sessionEnd) + '</div>';
+    html += '<div class="text-sm text-gray-500">' + totalCal.toFixed(1) + ' kcal · ' + (totalDist / 1000).toFixed(2) + ' km · ' + formatDurationLong(totalDur) + '</div>';
+    html += '</div>';
+
+    session.forEach((seg, si) => {
+      if (si > 0) {
+        const prev = session[si - 1];
+        const prevEnd = new Date(prev.started_at).getTime() / 1000 + prev.duration_s;
+        const thisStart = new Date(seg.started_at).getTime() / 1000;
+        const gap = thisStart - prevEnd;
+        if (gap > 5) {
+          html += '<div class="text-center text-xs text-gray-600 py-1.5">';
+          html += 'paused ' + formatDurationLong(gap);
+          html += '</div>';
+        }
+      }
+      html += renderSegmentCard(seg);
+    });
+
+    // Placeholder for live segment inside the last session card.
+    if (si === sessions.length - 1) {
+      html += '<div id="activity-live-inner"></div>';
+    }
+
+    html += '</div>';
+  });
+
+  // Store last closed segment end time for live segment placement.
+  if (segments.length > 0) {
+    const last = segments[segments.length - 1];
+    window._lastClosedEnd = new Date(last.started_at).getTime() / 1000 + last.duration_s;
+  } else {
+    window._lastClosedEnd = null;
+  }
+
+  el.innerHTML = html;
+}
+
+function renderLiveSegment(seg) {
+  const outerEl = document.getElementById('activity-live');
+  const innerEl = document.getElementById('activity-live-inner');
+
+  // Clear both containers first.
+  if (outerEl) outerEl.innerHTML = '';
+  if (innerEl) innerEl.innerHTML = '';
+
+  if (!seg) return;
+
+  // Check if live segment is adjacent to the last closed segment (< 60 min gap).
+  const segStart = new Date(seg.started_at).getTime() / 1000;
+  const adjacent = window._lastClosedEnd && (segStart - window._lastClosedEnd) < 3600;
+
+  let html = '';
+  // Show pause gap if adjacent and there's a gap > 5s.
+  if (adjacent && window._lastClosedEnd) {
+    const gap = segStart - window._lastClosedEnd;
+    if (gap > 5) {
+      html += '<div class="flex items-center gap-3 py-2 my-1">';
+      html += '<div class="flex-1 border-t border-dashed border-gray-700"></div>';
+      html += '<span class="text-xs text-gray-600 px-2">paused ' + formatDurationLong(gap) + '</span>';
+      html += '<div class="flex-1 border-t border-dashed border-gray-700"></div>';
+      html += '</div>';
+    }
+  }
+  html += renderSegmentCard(seg);
+
+  if (adjacent && innerEl) {
+    innerEl.innerHTML = html;
+  } else if (outerEl) {
+    outerEl.innerHTML = html;
+  }
+}
+
+function renderSegmentCard(seg) {
+  const dur = seg.duration_s;
+  if (seg.moving) {
+    const met = metForSpeed(seg.speed_kmh);
+    const segStart = new Date(seg.started_at);
+    const segEnd = new Date(segStart.getTime() + dur * 1000);
+    let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
+    html += '<div class="flex items-center gap-4 text-sm">';
+    if (seg.open) {
+      html += '<div class="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0 animate-pulse"></div>';
+    }
+    html += '<span class="text-gray-400">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
+    html += '<span class="text-white font-medium">' + formatDurationLong(dur) + '</span>';
+    html += '<span class="text-gray-300">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
+    html += '<span class="text-gray-300">' + seg.calories_kcal.toFixed(1) + ' kcal</span>';
+    html += '<span class="text-gray-500">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
+    html += '<span class="text-gray-600 text-xs">MET ' + met.toFixed(1) + '</span>';
+    html += '<span class="text-gray-600 text-xs">' + seg.weight_kg.toFixed(0) + ' kg</span>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  } else {
+    let html = '<div class="text-center text-xs text-yellow-600/50 py-1.5">';
+    html += 'idle ' + formatDurationLong(dur);
+    html += '</div>';
+    return html;
+  }
+}
+
+function formatDurationLong(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0 && m > 0) return h + 'h ' + m + ' min';
+  if (h > 0) return h + ' hour' + (h > 1 ? 's' : '');
+  if (m > 0 && s > 0) return m + ' min ' + s + ' sec';
+  if (m > 0) return m + ' min';
+  return s + ' sec';
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+function formatTime(date) {
+  return date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
+}
+
+function metForSpeed(kmh) {
+  if (kmh < 1.6) return 2.1;
+  if (kmh <= 3.0) return 2.8;
+  if (kmh <= 3.9) return 3.0;
+  if (kmh <= 4.7) return 3.5;
+  if (kmh <= 5.5) return 3.8;
+  if (kmh <= 6.3) return 4.8;
+  if (kmh <= 7.1) return 5.8;
+  if (kmh <= 7.9) return 6.8;
+  return 8.3;
+}
+
+// -- WebSocket (state changes only) + polling --
+
+const LEADERBOARD_POLL_INTERVAL_MS = 5000;
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -424,12 +649,11 @@ function connect() {
     status.className = 'text-xs px-6 py-1 text-green-500';
   };
 
-  let pendingRefresh = false;
+  // WebSocket only fires on state changes (segment open/close/disconnect).
   ws.onmessage = () => {
-    if (!pendingRefresh) {
-      pendingRefresh = true;
-      setTimeout(() => { fetchLeaderboard(); pendingRefresh = false; }, LEADERBOARD_REFRESH_DELAY_MS);
-    }
+    // Refetch closed segments — a segment was just opened or closed.
+    if (currentActivityId) fetchActivityClosed();
+    fetchLeaderboard();
   };
 
   ws.onclose = () => {
@@ -441,6 +665,9 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
+// Leaderboard polls on its own schedule, independent of WebSocket.
+setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
+
 // -- Restore tab from URL hash (runs immediately, before async) --
 const hash = location.hash.slice(1);
 if (hash.startsWith('profile/')) {
@@ -448,6 +675,12 @@ if (hash.startsWith('profile/')) {
   showTab('profile');
 } else if (hash === 'profile' && currentProfileId) {
   showTab('profile');
+} else if (hash.startsWith('activity/')) {
+  currentActivityId = hash.split('/')[1] || loggedInId;
+  showTab('activity');
+} else if (hash === 'activity') {
+  currentActivityId = loggedInId;
+  showTab('activity');
 } else {
   showTab('leaderboard');
 }

@@ -5,7 +5,43 @@ use tracing::{info, warn};
 
 use crate::device::{ProfileRegistry, TreadmillProfile};
 
+/// Check Bluetooth permission on macOS. Fails early with a clear message
+/// instead of letting CoreBluetooth segfault when permission is denied.
+#[cfg(target_os = "macos")]
+pub fn check_bluetooth_permission() -> anyhow::Result<()> {
+    // Call [CBManager authorization] via Objective-C runtime FFI.
+    // Returns: 0=notDetermined, 1=restricted, 2=denied, 3=allowed
+    extern "C" {
+        fn objc_getClass(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+        fn sel_registerName(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+        fn objc_msgSend(receiver: *const std::ffi::c_void, sel: *const std::ffi::c_void) -> isize;
+    }
+
+    let auth = unsafe {
+        let class = objc_getClass(c"CBManager".as_ptr());
+        if class.is_null() {
+            return Ok(()); // CoreBluetooth not available — skip check.
+        }
+        let sel = sel_registerName(c"authorization".as_ptr());
+        objc_msgSend(class, sel)
+    };
+
+    match auth {
+        2 => anyhow::bail!(
+            "Bluetooth permission denied. Grant access in System Settings > Privacy & Security > Bluetooth."
+        ),
+        1 => anyhow::bail!("Bluetooth access is restricted on this device."),
+        _ => Ok(()), // 0=notDetermined (will prompt), 3=allowed
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn check_bluetooth_permission() -> anyhow::Result<()> {
+    Ok(())
+}
+
 pub async fn get_adapter() -> anyhow::Result<Adapter> {
+    check_bluetooth_permission()?;
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
 
@@ -89,9 +125,7 @@ pub async fn subscribe_notify(
 
     for service in &services {
         for ch in &service.characteristics {
-            if notify_uuids.contains(&ch.uuid)
-                && ch.properties.contains(CharPropFlags::NOTIFY)
-            {
+            if notify_uuids.contains(&ch.uuid) && ch.properties.contains(CharPropFlags::NOTIFY) {
                 match device.subscribe(ch).await {
                     Ok(()) => {
                         subscribed.push(ch.clone());
