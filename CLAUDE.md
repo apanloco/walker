@@ -34,8 +34,7 @@ src/
     auth.rs        — OAuth: device code flow (CLI) + web login (dashboard), GitHub/Google
     db.rs          — PostgreSQL: migrations, segment CRUD, MET table, queries, dev seed data
     update.rs      — POST /api/update, segment lifecycle (open/close/heartbeat)
-    live.rs        — /ws/live WebSocket, simulate register, disconnect checker
-    state.rs       — in-memory user state, live broadcast structs
+    live.rs        — /ws/live + /ws/live/{id} WebSockets, simulate register, disconnect checker
     activity.rs    — GET /api/activity/{id} segment timeline
     dashboard.rs   — serves dashboard (include_str! in prod, ServeDir in dev)
     leaderboard.rs — GET /api/leaderboard with live status merge
@@ -83,10 +82,12 @@ Walker CLI  ──→  POST /api/update    (HTTP, stateless, authenticated)
                       ↓
                  Server (segment-based)
                    ├─ on state change: close old segment, open new one
-                   ├─ on heartbeat: update open segment duration + last_seen
-                   ├─ broadcasts to /ws/live viewers
+                   ├─ on heartbeat: update open segment duration + last_heartbeat_at
+                   ├─ notifies /ws/live viewers (state changes + disconnect checks)
+                   ├─ pushes segment data to /ws/live/{id} subscribers
                    ↓
-Dashboard   ←──  /ws/live            (WebSocket, triggers page refresh)
+Dashboard   ←──  /ws/live            (WebSocket, notification-only, triggers REST refetch)
+Dashboard   ←──  /ws/live/{id}       (WebSocket, per-user live segment push)
 Dashboard   ←──  GET /api/leaderboard (REST)
 Dashboard   ←──  GET /api/profile/{id} (REST)
 Dashboard   ←──  GET /api/activity/{id} (REST, segment timeline)
@@ -179,15 +180,14 @@ Default 70.0 kg. Stored on each segment at creation time so historical calories 
 
 ### Server → Viewer Protocol
 
-**`/ws/live`** — broadcasts on state changes (segment open/close) + every 5s disconnect check (not on heartbeats):
+**`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + every 5s disconnect check. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
+
+**`/ws/live/{id}`** — per-user WebSocket. Pushes the open segment JSON on every heartbeat (~1/s) and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
 ```json
-{
-  "users": [
-    {"id": "uuid", "name": "daniel", "avatar_url": "...", "status": "walking", "speed_kmh": 3.2,
-     "calories_kcal": 45.2, "distance_m": 2414, "active_secs": 245}
-  ]
-}
+{"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "duration_s": 120.5,
+             "weight_kg": 70.0, "calories_kcal": 12.3, "distance_m": 107.1, "open": true}}
 ```
+Returns `{"segment": null}` when the user has no open segment.
 
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
@@ -214,7 +214,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - Today / This Week / All Time top 10
 - Live status indicators (pulsing green dot for walking, yellow for idle)
 - Clickable names → profile page
-- Polls server every 5 seconds (client-side `setInterval`, independent of WebSocket)
+- Polls server every 5 seconds (client-side `setInterval`) + refetches on `/ws/live` notifications
 
 **Profile page:**
 - Hero: avatar, name, streak, live walking badge
@@ -229,12 +229,13 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - Today's segments grouped into sessions (gap > 60 min = separate session)
 - Each segment is a mini-card: time range, duration, distance, calories, speed, MET, weight
 - Gaps between segments shown as "paused X min Y sec" dashed dividers
-- **Two-endpoint architecture** for smart DOM updates:
-  - `GET /api/activity/{id}` — closed segments, fetched on page load + WebSocket state changes
-  - `GET /api/activity/{id}/current` — the one open segment, polled every 1 second
+- **Two-channel architecture** for smart DOM updates:
+  - `GET /api/activity/{id}` — closed segments, fetched on page load + `/ws/live` notifications
+  - `/ws/live/{id}` — live segment pushed by server on every heartbeat (~1/s) and state change
   - Closed segments rendered once into `#activity-closed`, not replaced on heartbeat
   - Live segment updated in `#activity-live` without touching closed segments
   - No scroll reset, no text selection loss, no full page rebuild
+  - Per-user WebSocket connected when activity page shown, disconnected when navigating away
 
 **Login:** dashboard OAuth via cookie (`walker_id`), same callback URL as CLI (state=web distinguishes). Dev mode: visit `/dev/login` to auto-set cookie.
 

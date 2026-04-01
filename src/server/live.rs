@@ -1,14 +1,15 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info, warn};
 
 use super::db;
@@ -22,35 +23,40 @@ pub struct TokenUser {
     pub avatar_url: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
-pub struct LiveBroadcast {
-    pub users: Vec<LiveUser>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct LiveUser {
-    pub id: uuid::Uuid,
-    pub name: String,
-    pub avatar_url: Option<String>,
-    pub status: String,
-    pub speed_kmh: f64,
-    pub calories_kcal: f64,
-    pub distance_m: f64,
-    pub active_secs: u64,
-}
-
 pub struct LiveContext {
-    pub broadcast_tx: broadcast::Sender<LiveBroadcast>,
+    /// Notification-only broadcast: fires on state changes + disconnect checks.
+    /// Carries no data — dashboard refetches via REST on receipt.
+    pub broadcast_tx: broadcast::Sender<()>,
+    /// Per-user channels: push open segment data to `/ws/live/{id}` subscribers.
+    pub user_txs: RwLock<HashMap<uuid::Uuid, broadcast::Sender<String>>>,
     pub db_pool: Arc<sqlx::PgPool>,
     pub dev_mode: bool,
 }
 
 pub type SharedLive = Arc<LiveContext>;
 
+/// Push the current open segment JSON to any subscribers watching this user.
+pub async fn push_user_segment(ctx: &LiveContext, user_id: uuid::Uuid) {
+    let txs = ctx.user_txs.read().await;
+    let Some(tx) = txs.get(&user_id) else {
+        return;
+    };
+    if tx.receiver_count() == 0 {
+        return;
+    }
+    match db::get_current_segment_json(&ctx.db_pool, user_id).await {
+        Ok(json) => {
+            let _ = tx.send(json);
+        }
+        Err(e) => error!(error = %e, "Failed to query segment for push"),
+    }
+}
+
 pub fn routes() -> Router<SharedLive> {
     Router::new()
         .route("/api/simulate/register", post(register_simulated_user))
         .route("/ws/live", get(ws_live))
+        .route("/ws/live/{id}", get(ws_live_user))
 }
 
 // -- POST /api/simulate/register --
@@ -94,7 +100,7 @@ async fn register_simulated_user(
     (StatusCode::OK, Json(SimulateRegisterResponse { token }))
 }
 
-// -- WebSocket /ws/live --
+// -- WebSocket /ws/live (notification-only) --
 
 async fn ws_live(State(ctx): State<SharedLive>, ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_live(socket, ctx))
@@ -104,23 +110,13 @@ async fn handle_ws_live(mut socket: WebSocket, ctx: SharedLive) {
     let mut rx = ctx.broadcast_tx.subscribe();
     info!("Live viewer connected");
 
-    // Send current state immediately so the dashboard doesn't start empty.
-    match db::live_snapshot(&ctx.db_pool).await {
-        Ok(snapshot) => {
-            if let Ok(json) = serde_json::to_string(&snapshot) {
-                let _ = socket.send(Message::Text(json.into())).await;
-            }
-        }
-        Err(e) => error!(error = %e, "Failed to build initial live snapshot"),
-    }
+    // Send initial notification so dashboard fetches immediately.
+    let _ = socket.send(Message::Text("update".into())).await;
 
     loop {
         match rx.recv().await {
-            Ok(broadcast) => {
-                let Ok(json) = serde_json::to_string(&broadcast) else {
-                    continue;
-                };
-                if socket.send(Message::Text(json.into())).await.is_err() {
+            Ok(()) => {
+                if socket.send(Message::Text("update".into())).await.is_err() {
                     break;
                 }
             }
@@ -132,6 +128,57 @@ async fn handle_ws_live(mut socket: WebSocket, ctx: SharedLive) {
     }
 
     info!("Live viewer disconnected");
+}
+
+// -- WebSocket /ws/live/{id} (per-user segment push) --
+
+async fn ws_live_user(
+    State(ctx): State<SharedLive>,
+    Path(id_str): Path<String>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    let Ok(user_id) = uuid::Uuid::parse_str(&id_str) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    ws.on_upgrade(move |socket| handle_ws_live_user(socket, ctx, user_id))
+        .into_response()
+}
+
+async fn handle_ws_live_user(mut socket: WebSocket, ctx: SharedLive, user_id: uuid::Uuid) {
+    info!(user_id = %user_id, "Activity viewer connected");
+
+    // Get or create the per-user broadcast channel.
+    let mut rx = {
+        let mut txs = ctx.user_txs.write().await;
+        let tx = txs
+            .entry(user_id)
+            .or_insert_with(|| broadcast::channel(16).0);
+        tx.subscribe()
+    };
+
+    // Send current segment immediately.
+    match db::get_current_segment_json(&ctx.db_pool, user_id).await {
+        Ok(json) => {
+            let _ = socket.send(Message::Text(json.into())).await;
+        }
+        Err(e) => error!(error = %e, "Failed to query initial segment"),
+    }
+
+    loop {
+        match rx.recv().await {
+            Ok(json) => {
+                if socket.send(Message::Text(json.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                warn!(skipped = n, "Activity viewer lagging, skipped messages");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+
+    info!(user_id = %user_id, "Activity viewer disconnected");
 }
 
 /// Lightweight timer: checks for disconnected users every 5 seconds
@@ -147,13 +194,8 @@ pub fn spawn_disconnect_checker(ctx: SharedLive) {
                 error!(error = %e, "Disconnect checker failed to close stale segments");
             }
 
-            // Broadcast current state to all viewers.
-            match db::live_snapshot(&ctx.db_pool).await {
-                Ok(broadcast) => {
-                    let _ = ctx.broadcast_tx.send(broadcast);
-                }
-                Err(e) => error!(error = %e, "Disconnect checker failed to build live snapshot"),
-            }
+            // Notify all viewers that state may have changed.
+            let _ = ctx.broadcast_tx.send(());
         }
     });
 }

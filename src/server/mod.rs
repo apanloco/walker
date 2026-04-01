@@ -89,6 +89,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     let live_ctx = Arc::new(live::LiveContext {
         broadcast_tx,
+        user_txs: RwLock::new(std::collections::HashMap::new()),
         db_pool: pool.clone(),
         dev_mode: config.dev,
     });

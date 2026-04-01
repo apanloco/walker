@@ -15,9 +15,9 @@ function showTab(name) {
     location.hash = (currentActivityId && currentActivityId !== loggedInId)
       ? 'activity/' + currentActivityId : 'activity';
     fetchActivityClosed();
-    startActivityPolling();
+    connectActivityWs();
   } else {
-    stopActivityPolling();
+    disconnectActivityWs();
     location.hash = name;
   }
 }
@@ -427,7 +427,7 @@ function renderProfile(p) {
 // -- Activity page --
 
 let currentActivityId = null;
-let activityLiveInterval = null;
+let activityWs = null;
 
 function showActivity(id) {
   currentActivityId = id || loggedInId;
@@ -438,31 +438,41 @@ function fetchActivityClosed() {
   if (!currentActivityId) return;
   fetch('/api/activity/' + encodeURIComponent(currentActivityId))
     .then(r => r.json())
-    .then(data => {
-      renderClosedSegments(data.segments || []);
-      fetchActivityCurrent(); // Also refresh live segment.
-    })
+    .then(data => renderClosedSegments(data.segments || []))
     .catch(() => {});
 }
 
-function fetchActivityCurrent() {
+function connectActivityWs() {
+  disconnectActivityWs();
   if (!currentActivityId) return;
-  fetch('/api/activity/' + encodeURIComponent(currentActivityId) + '/current')
-    .then(r => r.json())
-    .then(data => renderLiveSegment(data.segment))
-    .catch(() => {});
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/live/' + encodeURIComponent(currentActivityId));
+  ws.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      renderLiveSegment(data.segment);
+    } catch (_) {}
+  };
+  ws.onclose = () => {
+    // Reconnect if we're still on the activity page.
+    if (activityWs === ws) {
+      activityWs = null;
+      setTimeout(() => {
+        if (currentActivityId && !document.getElementById('page-activity').classList.contains('hidden')) {
+          connectActivityWs();
+        }
+      }, 2000);
+    }
+  };
+  ws.onerror = () => ws.close();
+  activityWs = ws;
 }
 
-function startActivityPolling() {
-  stopActivityPolling();
-  fetchActivityCurrent();
-  activityLiveInterval = setInterval(fetchActivityCurrent, 1000);
-}
-
-function stopActivityPolling() {
-  if (activityLiveInterval) {
-    clearInterval(activityLiveInterval);
-    activityLiveInterval = null;
+function disconnectActivityWs() {
+  if (activityWs) {
+    const ws = activityWs;
+    activityWs = null;
+    ws.close();
   }
 }
 
