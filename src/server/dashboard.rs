@@ -11,10 +11,9 @@ pub fn routes<S: Clone + Send + Sync + 'static>(dev: bool) -> Router<S> {
                 .fallback(tower_http::services::ServeFile::new("dashboard/index.html")),
         )
     } else {
-        // Production: embedded in binary.
-        Router::new()
-            .route("/", get(index))
-            .route("/app.js", get(js))
+        // Production: embedded in binary. Explicit /app.js route for correct
+        // content-type; everything else falls back to index.html (SPA routing).
+        Router::new().route("/app.js", get(js)).fallback(get(index))
     }
 }
 

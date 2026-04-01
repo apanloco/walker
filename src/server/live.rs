@@ -134,9 +134,18 @@ async fn handle_ws_live(mut socket: WebSocket, ctx: SharedLive) {
 
 async fn ws_live_user(
     State(ctx): State<SharedLive>,
+    headers: axum::http::HeaderMap,
     Path(id_str): Path<String>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Require login: caller must have a valid walker_id cookie.
+    let Some(caller) = super::cookie_user_id(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !db::user_exists(&ctx.db_pool, caller).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let Ok(user_id) = uuid::Uuid::parse_str(&id_str) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -190,8 +199,16 @@ pub fn spawn_disconnect_checker(ctx: SharedLive) {
             interval.tick().await;
 
             // Close segments for disconnected users (no heartbeat in 5s).
-            if let Err(e) = db::close_stale_segments(&ctx.db_pool, 5.0).await {
-                error!(error = %e, "Disconnect checker failed to close stale segments");
+            match db::close_stale_segments(&ctx.db_pool, 5.0).await {
+                Ok(user_ids) => {
+                    // Push null segment to viewers watching disconnected users.
+                    for user_id in &user_ids {
+                        push_user_segment(&ctx, *user_id).await;
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Disconnect checker failed to close stale segments");
+                }
             }
 
             // Notify all viewers that state may have changed.

@@ -4,6 +4,10 @@
 
 This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of truth for how the program works. All requirements, commands, and behavior must be documented here before implementation. Implementation details that are too granular for this file may live as comments in code.
 
+**Simplicity is a hard requirement.** If something feels complex, stop and simplify before continuing. Prefer deleting code over adding abstractions. Prefer the browser's built-in behavior over reimplementing it in JavaScript. Prefer one SQL query over an in-memory cache. If the simple approach has a tradeoff (e.g., a page flash on navigation), accept it.
+
+**CLAUDE.md must be updated as part of every task.** Any change to behavior, architecture, protocol, or UI must be reflected here before the task is considered done. This file is what future conversations read first — if it's wrong, everything built on it will be wrong.
+
 ## License
 
 MIT. Use super permissive licenses for all code and dependencies where possible.
@@ -41,7 +45,7 @@ src/
     profile.rs     — GET /api/profile/{id} with year history, records, periods
 dashboard/
   index.html       — Tailwind CSS + Inter font + Twemoji, nav, leaderboard, profile, activity pages
-  app.js           — SPA: leaderboard, profile with heatmap, activity timeline, WebSocket
+  app.js           — leaderboard, profile with heatmap, activity timeline, WebSocket
 migrations/
   001_initial.sql  — users, tokens, segments tables
 deny.toml          — cargo-deny license/advisory config
@@ -124,25 +128,31 @@ No segments are created for time offline, disconnected, or with treadmill off. T
 
 #### Server Behavior
 
-The server keeps the current open segment ID per user in memory.
+No in-memory state. The database (segments table) is the single source of truth. Each request queries the DB for the user's open segment.
 
 **On state change** (`walking→idle`, `idle→walking`, speed change):
 1. Close current segment (set duration, calories, distance, `open = false`).
 2. Insert new segment with `open = true`.
 
+**False idle absorption** (`idle→walking` when idle segment < 10s):
+Light users (e.g. kids) can cause flaky step detection, creating spurious idle segments. When the server receives a `walking` update and the current open segment is idle with age < `MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS` (10s):
+1. Delete the short idle segment.
+2. Reopen the previous walking segment (if it has a recent `last_heartbeat_at` within `MAX_ABSORB_REOPEN_WINDOW_SECS` (15s) and matching speed).
+3. If no eligible previous walking segment exists, fall through to the normal path (open a new walking segment).
+This keeps idle detection fast on the client while cleaning up sensor noise on the server.
+
 **On stopped:**
 1. Close current segment. No new segment.
 
 **On heartbeat** (same state, nothing changed):
-1. Update `last_seen` in memory for disconnect detection.
-2. Update current segment's duration/calories/distance in DB (crash safety).
+1. Update current segment's duration/calories/distance + `last_heartbeat_at` in DB.
 
 **On disconnect** (no heartbeat for 5 seconds):
-1. Close current segment using `last_seen` as end time.
+1. Close current segment using `last_heartbeat_at` as end time.
 
 #### Crash Recovery
 
-On server startup, close any stale open segments where `started_at + duration_s` is more than 1 minute in the past. Duration was kept fresh by heartbeats, so data is accurate to ~1 second.
+On server startup, close any stale open segments where `last_heartbeat_at` is more than 60 seconds in the past. Duration was kept fresh by heartbeats, so data is accurate to ~1 second.
 
 #### Daily Totals
 
@@ -182,7 +192,7 @@ Default 70.0 kg. Stored on each segment at creation time so historical calories 
 
 **`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + every 5s disconnect check. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
 
-**`/ws/live/{id}`** — per-user WebSocket. Pushes the open segment JSON on every heartbeat (~1/s) and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
+**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). Pushes the open segment JSON on every heartbeat (~1/s) and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "duration_s": 120.5,
              "weight_kg": 70.0, "calories_kcal": 12.3, "distance_m": 107.1, "open": true}}
@@ -198,9 +208,9 @@ Returns `{"segment": null}` when the user has no open segment.
 }
 ```
 
-**`GET /api/profile/{id}`** — full year history, records, period calories.
+**`GET /api/profile/{id}`** — full year history, records, period calories. **Requires login** (`walker_id` cookie).
 
-**`GET /api/activity/{id}`** — today's segments for the activity page.
+**`GET /api/activity/{id}?date=YYYY-MM-DD`** — segments for a given date (defaults to today). **Requires login** (`walker_id` cookie).
 
 ### Dashboard
 
@@ -210,36 +220,40 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 
 **Tech stack:** Tailwind CSS (CDN), Inter font (Google Fonts), Twemoji (consistent emoji rendering)
 
-**Leaderboard tab** (default):
+**Navigation:** Logo + tabs (Leaderboard, Activity) on the left. Avatar dropdown on the right (Profile, Settings, Logout). Activity tab only visible when logged in. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
+
+**Leaderboard tab** (default, public — no login required):
 - Today / This Week / All Time top 10
 - Live status indicators (pulsing green dot for walking, yellow for idle)
-- Clickable names → profile page
+- Clickable names → profile page (redirects to leaderboard if not logged in)
 - Polls server every 5 seconds (client-side `setInterval`) + refetches on `/ws/live` notifications
 
-**Profile page:**
+**Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
 - Stats grid: total kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
-- GitHub-style daily heatmap: full year, green intensity + gold for 8+ km days
+- GitHub-style daily heatmap: full year, green intensity + gold for 8+ km days, clickable cells → activity page for that date
 - Last 7 days: horizontal bar chart
 - Fetched on page load only (summary data, not live)
 
-**Activity page:**
-- Today's segments grouped into sessions (gap > 60 min = separate session)
+**Activity page** (login required):
+- Segments for a given date, grouped into sessions (gap > 60 min = separate session)
+- Supports `?date=YYYY-MM-DD` query param, defaults to today
+- Newest session first, newest segment first within each session
 - Each segment is a mini-card: time range, duration, distance, calories, speed, MET, weight
-- Gaps between segments shown as "paused X min Y sec" dashed dividers
-- **Two-channel architecture** for smart DOM updates:
-  - `GET /api/activity/{id}` — closed segments, fetched on page load + `/ws/live` notifications
+- Gaps between segments shown as "paused X min Y sec" dividers
+- **Two-channel architecture** for smart DOM updates (today only):
+  - `GET /api/activity/{id}?date=` — closed segments, fetched on page load + `/ws/live` notifications
   - `/ws/live/{id}` — live segment pushed by server on every heartbeat (~1/s) and state change
   - Closed segments rendered once into `#activity-closed`, not replaced on heartbeat
   - Live segment updated in `#activity-live` without touching closed segments
-  - No scroll reset, no text selection loss, no full page rebuild
-  - Per-user WebSocket connected when activity page shown, disconnected when navigating away
+  - Per-user WebSocket connected on page load only for today, auto-reconnects on disconnect
+  - Historical dates show closed segments only (no WebSocket)
 
-**Login:** dashboard OAuth via cookie (`walker_id`), same callback URL as CLI (state=web distinguishes). Dev mode: visit `/dev/login` to auto-set cookie.
+**Login:** dashboard OAuth via cookie (`walker_id`), same callback URL as CLI (state=web distinguishes). Dev mode: cookie auto-set via middleware.
 
-**URL routing:** hash-based SPA (`#leaderboard`, `#profile/<id>`, `#activity/<id>`)
+**URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/activity/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load and shows the right content. Legacy `#hash` URLs redirect automatically.
 
 ### Database (PostgreSQL)
 
@@ -253,6 +267,7 @@ Required. Migrations run automatically on startup. The server will not start wit
 - `id` BIGSERIAL PK, `user_id` UUID FK, `started_at` TIMESTAMPTZ
 - `moving` BOOLEAN, `speed_kmh` REAL, `duration_s` REAL, `open` BOOLEAN
 - `weight_kg` REAL (snapshot at creation), `calories_kcal` REAL, `distance_m` REAL
+- `last_heartbeat_at` TIMESTAMPTZ (updated on every heartbeat, used for disconnect detection)
 - Unique partial index enforces at most one open segment per user
 - Composite index on `(user_id, started_at)` for history queries
 

@@ -12,6 +12,16 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tracing::info;
 
+/// Extract the walker_id cookie as a UUID, or None if missing/invalid.
+pub fn cookie_user_id(headers: &axum::http::HeaderMap) -> Option<uuid::Uuid> {
+    let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    cookie_header
+        .split(';')
+        .map(|s| s.trim())
+        .find(|s| s.starts_with("walker_id="))
+        .and_then(|s| uuid::Uuid::parse_str(&s["walker_id=".len()..]).ok())
+}
+
 pub struct ServerConfig {
     pub port: u16,
     pub base_url: String,
@@ -65,9 +75,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let pool = Arc::new(db::connect(config.database_url.as_ref().unwrap()).await?);
 
     // Close stale open segments from any previous crash (1 minute threshold).
-    let closed = db::close_stale_segments(&pool, 60.0).await.unwrap_or(0);
-    if closed > 0 {
-        info!("Closed {closed} stale open segment(s) from previous run");
+    let closed = db::close_stale_segments(&pool, 60.0)
+        .await
+        .unwrap_or_default();
+    if !closed.is_empty() {
+        info!(
+            "Closed {} stale open segment(s) from previous run",
+            closed.len()
+        );
     }
 
     // Dev mode: create a test token.

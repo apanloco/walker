@@ -1,8 +1,4 @@
-use axum::{
-    Json, Router,
-    extract::{Path, State},
-    routing::get,
-};
+use axum::{Router, extract::{Path, State}, http::StatusCode, response::IntoResponse, routing::get};
 
 use super::db;
 use super::live::SharedLive;
@@ -38,12 +34,21 @@ pub fn routes() -> Router<SharedLive> {
 
 async fn get_profile(
     State(ctx): State<SharedLive>,
+    headers: axum::http::HeaderMap,
     Path(id_str): Path<String>,
-) -> Json<serde_json::Value> {
+) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
+    // Require login: caller must have a valid walker_id cookie.
+    let Some(caller) = super::cookie_user_id(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !db::user_exists(pool, caller).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
-        return Json(serde_json::json!({"error": "invalid user id"}));
+        return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
     let user = sqlx::query(
@@ -56,7 +61,7 @@ async fn get_profile(
     .flatten();
 
     let Some(user) = user else {
-        return Json(serde_json::json!({"error": "user not found"}));
+        return axum::Json(serde_json::json!({"error": "user not found"})).into_response();
     };
 
     let name: String = sqlx::Row::get(&user, "display_name");
@@ -122,7 +127,7 @@ async fn get_profile(
         _ => None,
     };
 
-    Json(serde_json::json!({
+    axum::Json(serde_json::json!({
         "id": id_str,
         "name": name,
         "avatar_url": avatar,
@@ -150,5 +155,5 @@ async fn get_profile(
         },
         "last_7_days": last_7,
         "heatmap": year_history,
-    }))
+    })).into_response()
 }
