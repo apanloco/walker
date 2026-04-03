@@ -59,12 +59,15 @@ async fn handle_update(
         // previous walking segment instead of creating a new one. This keeps idle
         // detection fast on the client while cleaning up sensor noise (e.g. light
         // users whose steps aren't always detected).
-        let absorbed = if moving && matches!(&open_seg, Some(seg) if !seg.moving && seg.age_secs < db::MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS) {
+        let absorbed = if moving
+            && matches!(&open_seg, Some(seg) if !seg.moving && seg.age_secs < db::MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS)
+        {
             let seg = open_seg.as_ref().unwrap();
             if db::delete_segment(pool, seg.id).await.unwrap_or(false) {
-                let reopened = db::reopen_previous_walking_segment(pool, user.id, payload.speed_kmh)
-                    .await
-                    .unwrap_or(false);
+                let reopened =
+                    db::reopen_previous_walking_segment(pool, user.id, payload.speed_kmh)
+                        .await
+                        .unwrap_or(false);
                 if reopened {
                     // Recalculate duration/calories/distance immediately so the
                     // WebSocket push below sends fresh values (not stale pre-close ones).

@@ -1,69 +1,29 @@
 use axum::{
-    Json, Router,
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect},
-    routing::{get, post},
+    routing::get,
 };
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::Deserialize;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 use tracing::info;
 
-pub type SharedState = Arc<RwLock<ServerState>>;
-
+/// Read-only server config. No mutex needed — nothing is mutated after startup.
 pub struct ServerState {
     pub github_client_id: Option<String>,
     pub github_client_secret: Option<String>,
     pub google_client_id: Option<String>,
     pub google_client_secret: Option<String>,
-    /// Base URL for constructing callback URLs (e.g., "http://localhost:3000").
     pub base_url: String,
-    /// Pending device code authorizations.
-    pub device_codes: HashMap<String, DeviceAuth>,
-    pub db_pool: std::sync::Arc<sqlx::PgPool>,
+    pub db_pool: Arc<sqlx::PgPool>,
+    pub dev: bool,
 }
 
-pub struct DeviceAuth {
-    pub user_code: String,
-    pub created_at: Instant,
-    /// Set once the user completes OAuth.
-    pub token: Option<String>,
-    pub user: Option<AuthUser>,
-}
-
-/// User identity — email is the primary key (shared across providers).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthUser {
-    pub email: String,
-    pub display_name: String,
-    pub avatar_url: Option<String>,
-    pub provider: String,
-}
+pub type SharedState = Arc<ServerState>;
 
 impl ServerState {
-    pub fn new(
-        base_url: String,
-        github_client_id: Option<String>,
-        github_client_secret: Option<String>,
-        google_client_id: Option<String>,
-        google_client_secret: Option<String>,
-        db_pool: std::sync::Arc<sqlx::PgPool>,
-    ) -> Self {
-        Self {
-            github_client_id,
-            github_client_secret,
-            google_client_id,
-            google_client_secret,
-            base_url,
-            device_codes: HashMap::new(),
-            db_pool,
-        }
-    }
-
     pub fn has_github(&self) -> bool {
         self.github_client_id.is_some() && self.github_client_secret.is_some()
     }
@@ -75,120 +35,65 @@ impl ServerState {
 
 pub fn routes() -> Router<SharedState> {
     Router::new()
-        .route("/auth/device", post(create_device_code))
-        .route("/auth/device/token", post(poll_device_token))
-        .route("/auth/device/verify", get(verify_page))
-        .route("/auth/web/github", get(web_github_redirect))
-        .route("/auth/web/google", get(web_google_redirect))
-        .route("/auth/github", get(github_redirect))
+        .route("/login", get(login_page))
         .route("/auth/github/callback", get(github_callback))
-        .route("/auth/google", get(google_redirect))
         .route("/auth/google/callback", get(google_callback))
+        .route("/auth/dev/callback", get(dev_callback))
 }
 
-// -- Device code flow --
-
-#[derive(Serialize)]
-struct DeviceCodeResponse {
-    device_code: String,
-    user_code: String,
-    verification_url: String,
-    expires_in: u64,
-    interval: u64,
-}
-
-async fn create_device_code(State(state): State<SharedState>) -> Json<DeviceCodeResponse> {
-    let device_code = generate_token(32);
-    let user_code = generate_user_code();
-
-    let mut state = state.write().await;
-    state.device_codes.insert(
-        device_code.clone(),
-        DeviceAuth {
-            user_code: user_code.clone(),
-            created_at: Instant::now(),
-            token: None,
-            user: None,
-        },
-    );
-
-    info!(user_code = %user_code, "Device code created");
-
-    Json(DeviceCodeResponse {
-        device_code,
-        user_code,
-        verification_url: String::new(),
-        expires_in: 900,
-        interval: 2,
-    })
-}
+// -- Login page --
 
 #[derive(Deserialize)]
-struct PollRequest {
-    device_code: String,
+struct LoginParams {
+    cli_port: Option<u16>,
 }
 
-async fn poll_device_token(
-    State(state): State<SharedState>,
-    Json(req): Json<PollRequest>,
-) -> impl IntoResponse {
-    let state = state.read().await;
-
-    let Some(auth) = state.device_codes.get(&req.device_code) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "invalid_device_code"})),
-        );
-    };
-
-    if auth.created_at.elapsed() > Duration::from_secs(900) {
-        return (
-            StatusCode::GONE,
-            Json(serde_json::json!({"error": "expired"})),
-        );
+/// The `state` parameter encodes the flow: "web" for dashboard, "cli:<port>" for CLI.
+fn flow_state(cli_port: Option<u16>) -> String {
+    match cli_port {
+        Some(port) => format!("cli:{port}"),
+        None => "web".to_string(),
     }
-
-    if let (Some(token), Some(user)) = (&auth.token, &auth.user) {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "token": token,
-                "user": user,
-            })),
-        );
-    }
-
-    (
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({"error": "authorization_pending"})),
-    )
 }
 
-// -- Verification page --
-
-#[derive(Deserialize)]
-struct VerifyParams {
-    code: Option<String>,
-}
-
-async fn verify_page(
+async fn login_page(
     State(state): State<SharedState>,
-    Query(params): Query<VerifyParams>,
+    Query(params): Query<LoginParams>,
 ) -> Html<String> {
-    let code_value = params.code.unwrap_or_default();
-    let state = state.read().await;
+    let flow = flow_state(params.cli_port);
 
     let mut buttons = String::new();
+
     if state.has_github() {
+        let client_id = state.github_client_id.as_ref().unwrap();
+        let callback = format!("{}/auth/github/callback", state.base_url);
+        let url = format!(
+            "https://github.com/login/oauth/authorize?client_id={client_id}&redirect_uri={}&state={flow}&scope=read:user%20user:email",
+            urlencoding::encode(&callback),
+        );
         buttons.push_str(&format!(
-            r#"<a class="btn github" href="/auth/github?user_code={code_value}">Login with GitHub</a>"#
+            r#"<a class="btn github" href="{url}">Login with GitHub</a>"#
         ));
     }
+
     if state.has_google() {
+        let client_id = state.google_client_id.as_ref().unwrap();
+        let callback = format!("{}/auth/google/callback", state.base_url);
+        let url = format!(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={}&state={flow}&response_type=code&scope=openid%20profile%20email",
+            urlencoding::encode(&callback),
+        );
         buttons.push_str(&format!(
-            r#"<a class="btn google" href="/auth/google?user_code={code_value}">Login with Google</a>"#
+            r#"<a class="btn google" href="{url}">Login with Google</a>"#
         ));
     }
+
+    if state.dev {
+        buttons.push_str(&format!(
+            r#"<a class="btn dev" href="/auth/dev/callback?state={flow}">Dev Login</a>"#
+        ));
+    }
+
     if buttons.is_empty() {
         buttons = "No login providers configured.".to_string();
     }
@@ -199,7 +104,6 @@ async fn verify_page(
 <head><title>Walker - Login</title>
 <style>
   body {{ font-family: system-ui; max-width: 400px; margin: 80px auto; text-align: center; }}
-  input {{ font-size: 24px; text-align: center; padding: 8px; letter-spacing: 4px; width: 200px; }}
   .buttons {{ margin-top: 24px; display: flex; flex-direction: column; gap: 12px; align-items: center; }}
   a.btn {{ display: inline-block; padding: 12px 24px; width: 220px;
            color: white; text-decoration: none; border-radius: 6px; font-size: 16px; }}
@@ -207,12 +111,13 @@ async fn verify_page(
   a.btn.github:hover {{ background: #444; }}
   a.btn.google {{ background: #4285f4; }}
   a.btn.google:hover {{ background: #3367d6; }}
+  a.btn.dev {{ background: #059669; }}
+  a.btn.dev:hover {{ background: #047857; }}
 </style>
 </head>
 <body>
   <h1>Walker</h1>
-  <p>Enter the code shown in your terminal:</p>
-  <input value="{code_value}" maxlength="9" readonly />
+  <p>Sign in to continue</p>
   <div class="buttons">
     {buttons}
   </div>
@@ -224,29 +129,7 @@ async fn verify_page(
 // -- GitHub OAuth --
 
 #[derive(Deserialize)]
-struct OAuthRedirectParams {
-    user_code: String,
-}
-
-async fn github_redirect(
-    State(state): State<SharedState>,
-    Query(params): Query<OAuthRedirectParams>,
-) -> impl IntoResponse {
-    let state = state.read().await;
-    let Some(client_id) = &state.github_client_id else {
-        return Html("GitHub login not configured".to_string()).into_response();
-    };
-    let callback = format!("{}/auth/github/callback", state.base_url);
-    let redirect_url = format!(
-        "https://github.com/login/oauth/authorize?client_id={client_id}&redirect_uri={}&state={}&scope=read:user%20user:email",
-        urlencoded(&callback),
-        params.user_code,
-    );
-    Redirect::temporary(&redirect_url).into_response()
-}
-
-#[derive(Deserialize)]
-struct GitHubCallbackParams {
+struct OAuthCallbackParams {
     code: String,
     state: String,
 }
@@ -271,18 +154,14 @@ struct GitHubEmail {
 
 async fn github_callback(
     State(state): State<SharedState>,
-    Query(params): Query<GitHubCallbackParams>,
+    Query(params): Query<OAuthCallbackParams>,
 ) -> impl IntoResponse {
-    let flow = params.state.clone();
-    let client = reqwest::Client::new();
-
-    let (client_id, client_secret) = {
-        let s = state.read().await;
-        match (&s.github_client_id, &s.github_client_secret) {
-            (Some(id), Some(secret)) => (id.clone(), secret.clone()),
-            _ => return Html("<h1>GitHub not configured</h1>".to_string()).into_response(),
-        }
+    let (client_id, client_secret) = match (&state.github_client_id, &state.github_client_secret) {
+        (Some(id), Some(secret)) => (id.clone(), secret.clone()),
+        _ => return Html("<h1>GitHub not configured</h1>".to_string()).into_response(),
     };
+
+    let client = reqwest::Client::new();
 
     let Ok(token_res) = client
         .post("https://github.com/login/oauth/access_token")
@@ -341,60 +220,19 @@ async fn github_callback(
             .into_response();
     };
 
-    let auth_user = AuthUser {
-        email: email.clone(),
-        display_name: github_user.login,
-        avatar_url: github_user.avatar_url,
-        provider: "github".to_string(),
-    };
-
-    // Web dashboard login: set cookie, redirect to /.
-    if flow == "web" {
-        let s = state.read().await;
-        let pool = &s.db_pool;
-        let _ = super::db::upsert_user(
-            pool,
-            &auth_user.email,
-            &auth_user.display_name,
-            auth_user.avatar_url.as_deref(),
-        )
-        .await;
-        let user_id = super::db::get_user_id(pool, &email)
-            .await
-            .unwrap_or_else(|_| uuid::Uuid::new_v4());
-        return set_cookie_and_redirect(&user_id.to_string());
-    }
-
-    // CLI device code flow: complete the device auth.
-    complete_auth(&state, &flow, auth_user)
-        .await
-        .into_response()
+    complete_auth(
+        &state,
+        &params.state,
+        &email,
+        &github_user.login,
+        github_user.avatar_url.as_deref(),
+        "github",
+    )
+    .await
+    .into_response()
 }
 
 // -- Google OAuth --
-
-async fn google_redirect(
-    State(state): State<SharedState>,
-    Query(params): Query<OAuthRedirectParams>,
-) -> impl IntoResponse {
-    let state = state.read().await;
-    let Some(client_id) = &state.google_client_id else {
-        return Html("Google login not configured".to_string()).into_response();
-    };
-    let callback = format!("{}/auth/google/callback", state.base_url);
-    let redirect_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={}&state={}&response_type=code&scope=openid%20profile%20email",
-        urlencoded(&callback),
-        params.user_code,
-    );
-    Redirect::temporary(&redirect_url).into_response()
-}
-
-#[derive(Deserialize)]
-struct GoogleCallbackParams {
-    code: String,
-    state: String,
-}
 
 #[derive(Deserialize)]
 struct GoogleTokenResponse {
@@ -410,20 +248,15 @@ struct GoogleUser {
 
 async fn google_callback(
     State(state): State<SharedState>,
-    Query(params): Query<GoogleCallbackParams>,
+    Query(params): Query<OAuthCallbackParams>,
 ) -> impl IntoResponse {
-    let flow = params.state.clone();
-    let client = reqwest::Client::new();
-
-    let (client_id, client_secret, base_url) = {
-        let s = state.read().await;
-        match (&s.google_client_id, &s.google_client_secret) {
-            (Some(id), Some(secret)) => (id.clone(), secret.clone(), s.base_url.clone()),
-            _ => return Html("<h1>Google not configured</h1>".to_string()).into_response(),
-        }
+    let (client_id, client_secret) = match (&state.google_client_id, &state.google_client_secret) {
+        (Some(id), Some(secret)) => (id.clone(), secret.clone()),
+        _ => return Html("<h1>Google not configured</h1>".to_string()).into_response(),
     };
 
-    let callback = format!("{base_url}/auth/google/callback");
+    let client = reqwest::Client::new();
+    let callback = format!("{}/auth/google/callback", state.base_url);
 
     let Ok(token_res) = client
         .post("https://oauth2.googleapis.com/token")
@@ -464,109 +297,101 @@ async fn google_callback(
         return Html("<h1>No email returned from Google</h1>".to_string()).into_response();
     };
 
-    let auth_user = AuthUser {
-        display_name: google_user.name.unwrap_or_else(|| email.clone()),
-        email: email.clone(),
-        avatar_url: google_user.picture,
-        provider: "google".to_string(),
-    };
+    let display_name = google_user.name.unwrap_or_else(|| email.clone());
 
-    if flow == "web" {
-        let s = state.read().await;
-        let pool = &s.db_pool;
-        let _ = super::db::upsert_user(
-            pool,
-            &auth_user.email,
-            &auth_user.display_name,
-            auth_user.avatar_url.as_deref(),
-        )
-        .await;
-        let user_id = super::db::get_user_id(pool, &email)
-            .await
-            .unwrap_or_else(|_| uuid::Uuid::new_v4());
-        return set_cookie_and_redirect(&user_id.to_string());
+    complete_auth(
+        &state,
+        &params.state,
+        &email,
+        &display_name,
+        google_user.picture.as_deref(),
+        "google",
+    )
+    .await
+    .into_response()
+}
+
+// -- Dev provider --
+
+#[derive(Deserialize)]
+struct DevCallbackParams {
+    state: String,
+}
+
+async fn dev_callback(
+    State(state): State<SharedState>,
+    Query(params): Query<DevCallbackParams>,
+) -> impl IntoResponse {
+    if !state.dev {
+        return Html("<h1>Dev login is only available in dev mode</h1>".to_string())
+            .into_response();
     }
 
-    complete_auth(&state, &flow, auth_user)
-        .await
-        .into_response()
+    complete_auth(
+        &state,
+        &params.state,
+        "dev@walker.local",
+        "Dev User",
+        None,
+        "dev",
+    )
+    .await
+    .into_response()
 }
 
 // -- Shared auth completion --
 
-async fn complete_auth(state: &SharedState, user_code: &str, auth_user: AuthUser) -> Html<String> {
-    let walker_token = generate_token(48);
-    let display_name = auth_user.display_name.clone();
-    let email = auth_user.email.clone();
+/// Handles both flows after OAuth identity is established:
+/// - "web" → upsert user, set cookie, redirect to /
+/// - "cli:<port>" → upsert user, create token, redirect to localhost callback
+async fn complete_auth(
+    state: &ServerState,
+    flow: &str,
+    email: &str,
+    display_name: &str,
+    avatar_url: Option<&str>,
+    provider: &str,
+) -> axum::response::Response {
+    let pool = &state.db_pool;
 
-    let mut state = state.write().await;
-    let mut found = false;
-    for auth in state.device_codes.values_mut() {
-        if auth.user_code == user_code && auth.token.is_none() {
-            auth.token = Some(walker_token.clone());
-            auth.user = Some(auth_user.clone());
-            found = true;
-            break;
+    let user_id =
+        match super::db::upsert_user_returning_id(pool, email, display_name, avatar_url).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to upsert user");
+                return Html("<h1>Database error</h1>".to_string()).into_response();
+            }
+        };
+
+    info!(user = %display_name, provider = %provider, "User authenticated");
+
+    if flow == "web" {
+        return set_cookie_and_redirect(&user_id.to_string());
+    }
+
+    // CLI flow: state is "cli:<port>"
+    if let Some(port_str) = flow.strip_prefix("cli:") {
+        let Ok(port) = port_str.parse::<u16>() else {
+            return Html("<h1>Invalid CLI port</h1>".to_string()).into_response();
+        };
+
+        let walker_token = generate_token(48);
+        if let Err(e) = super::db::store_token(pool, &walker_token, user_id).await {
+            tracing::error!(error = %e, "Failed to store token");
+            return Html("<h1>Database error</h1>".to_string()).into_response();
         }
+
+        let callback_url = format!(
+            "http://localhost:{port}/callback?token={}&email={}&name={}",
+            urlencoding::encode(&walker_token),
+            urlencoding::encode(email),
+            urlencoding::encode(display_name),
+        );
+
+        return Redirect::temporary(&callback_url).into_response();
     }
 
-    if found {
-        // Persist to DB.
-        let pool = &state.db_pool;
-        let _ =
-            super::db::upsert_user(pool, &email, &display_name, auth_user.avatar_url.as_deref())
-                .await;
-        let id = super::db::get_user_id(pool, &email)
-            .await
-            .unwrap_or_else(|_| uuid::Uuid::new_v4());
-        let _ = super::db::store_token(pool, &walker_token, id).await;
-
-        info!(user = %display_name, provider = %auth_user.provider, "User authenticated");
-        Html(format!(
-            r#"<!DOCTYPE html>
-<html>
-<head><title>Walker - Success</title>
-<style>body {{ font-family: system-ui; max-width: 400px; margin: 80px auto; text-align: center; }}</style>
-</head>
-<body>
-  <h1>Welcome, {display_name}!</h1>
-  <p>You can close this tab and return to your terminal.</p>
-</body>
-</html>"#
-        ))
-    } else {
-        Html("<h1>Invalid or expired code</h1>".to_string())
-    }
-}
-
-// -- Web (dashboard) login --
-// These redirect through OAuth and set a cookie, then redirect to /.
-
-async fn web_github_redirect(State(state): State<SharedState>) -> impl IntoResponse {
-    let state = state.read().await;
-    let Some(client_id) = &state.github_client_id else {
-        return Html("GitHub login not configured".to_string()).into_response();
-    };
-    // Same callback URL as CLI flow — state=web distinguishes the flows.
-    let callback = format!("{}/auth/github/callback", state.base_url);
-    let url = format!(
-        "https://github.com/login/oauth/authorize?client_id={client_id}&redirect_uri={}&state=web&scope=read:user%20user:email",
-        urlencoded(&callback),
-    );
-    Redirect::temporary(&url).into_response()
-}
-
-async fn web_google_redirect(State(state): State<SharedState>) -> impl IntoResponse {
-    let state = state.read().await;
-    let Some(client_id) = &state.google_client_id else {
-        return Html("Google login not configured".to_string()).into_response();
-    };
-    let callback = format!("{}/auth/google/callback", state.base_url);
-    let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={}&state=web&response_type=code&scope=openid%20profile%20email",
-        urlencoded(&callback),
-    );
-    Redirect::temporary(&url).into_response()
+    Html("<h1>Invalid login flow</h1>".to_string()).into_response()
 }
 
 fn set_cookie_and_redirect(user_id: &str) -> axum::response::Response {
@@ -594,15 +419,4 @@ fn generate_token(len: usize) -> String {
         .take(len)
         .map(char::from)
         .collect()
-}
-
-fn generate_user_code() -> String {
-    let mut rng = rand::rng();
-    let a: u32 = rng.random_range(0..10000);
-    let b: u32 = rng.random_range(0..10000);
-    format!("{a:04}-{b:04}")
-}
-
-fn urlencoded(s: &str) -> String {
-    s.replace(':', "%3A").replace('/', "%2F")
 }

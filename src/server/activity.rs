@@ -1,4 +1,10 @@
-use axum::{Router, extract::{Path, Query, State}, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
 use serde::Deserialize;
 use sqlx::Row;
 
@@ -116,7 +122,9 @@ async fn get_current_segment(
     .await;
 
     match row {
-        Ok(Some(r)) => axum::Json(serde_json::json!({ "segment": segment_json(&r, true) })).into_response(),
+        Ok(Some(r)) => {
+            axum::Json(serde_json::json!({ "segment": segment_json(&r, true) })).into_response()
+        }
         Ok(None) => axum::Json(serde_json::json!({ "segment": null })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "activity current segment query failed");

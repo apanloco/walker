@@ -53,6 +53,9 @@ enum Command {
         /// Use dev credentials
         #[arg(long)]
         dev: bool,
+        /// Run without server connection (data not reported)
+        #[arg(long)]
+        offline: bool,
     },
     /// Simulate a treadmill (no BLE needed)
     #[cfg(feature = "client")]
@@ -80,7 +83,7 @@ enum Command {
         /// Walker server URL
         #[arg(short, long, default_value = DEFAULT_SERVER)]
         server: String,
-        /// Use dev mode token (no OAuth, requires server started with --dev)
+        /// Use dev server (localhost:3000)
         #[arg(long)]
         dev: bool,
     },
@@ -142,7 +145,11 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "client")]
         Command::Enumerate { timeout } => enumerate(timeout).await?,
         #[cfg(feature = "client")]
-        Command::Walk { timeout, dev } => walk(timeout, dev).await?,
+        Command::Walk {
+            timeout,
+            dev,
+            offline,
+        } => walk(timeout, dev, offline).await?,
         #[cfg(feature = "client")]
         Command::Simulate { speed, count, dev } => simulate(speed, count, dev).await?,
         #[cfg(feature = "client")]
@@ -154,18 +161,7 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "client")]
         Command::Login { server, dev } => {
             let server = if dev { DEV_SERVER.to_string() } else { server };
-            if dev {
-                let config = auth::AuthConfig {
-                    server,
-                    token: "dev-token-walker".to_string(),
-                    email: "dev@walker.local".to_string(),
-                    display_name: "Dev User".to_string(),
-                };
-                auth::save(&config, true)?;
-                println!("  Logged in as Dev User (dev mode)");
-            } else {
-                auth::login(&server).await?;
-            }
+            auth::login(&server, dev).await?;
         }
         #[cfg(feature = "server")]
         Command::Listen {
@@ -272,7 +268,7 @@ async fn enumerate(timeout: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "client")]
-async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
+async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
     use btleplug::api::Peripheral;
     use colored::Colorize;
     use futures::stream::StreamExt;
@@ -284,19 +280,25 @@ async fn walk(timeout: u64, dev: bool) -> anyhow::Result<()> {
     let registry = default_registry();
     let adapter = ble::get_adapter().await?;
 
-    // Set up server reporter if logged in.
-    let mut server_reporter = match auth::load(dev)? {
-        Some(config) => {
-            info!(
-                server = %config.server,
-                user = %config.display_name,
-                "Reporting to server"
-            );
-            Some(reporter::ServerReporter::new(config.server, config.token))
-        }
-        None => {
-            info!("Not logged in — running offline (use 'walker login' to connect to a server)");
-            None
+    // Set up server reporter.
+    let mut server_reporter = if offline {
+        info!("Offline mode — data will not be reported to server");
+        None
+    } else {
+        match auth::load(dev)? {
+            Some(config) => {
+                info!(
+                    server = %config.server,
+                    user = %config.display_name,
+                    "Reporting to server"
+                );
+                Some(reporter::ServerReporter::new(config.server, config.token))
+            }
+            None => {
+                anyhow::bail!(
+                    "Not logged in. Run 'walker login' first, or use --offline to run without reporting."
+                );
+            }
         }
     };
 
