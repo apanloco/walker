@@ -14,15 +14,6 @@ use tracing::{error, info, warn};
 
 use super::db;
 
-#[derive(Clone)]
-#[allow(dead_code)]
-pub struct TokenUser {
-    pub id: uuid::Uuid,
-    pub email: String,
-    pub display_name: String,
-    pub avatar_url: Option<String>,
-}
-
 pub struct LiveContext {
     /// Notification-only broadcast: fires on state changes + disconnect checks.
     /// Carries no data — dashboard refetches via REST on receipt.
@@ -142,7 +133,7 @@ async fn ws_live_user(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !db::user_exists(&ctx.db_pool, caller).await {
+    if db::get_user(&ctx.db_pool, caller).await.is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 

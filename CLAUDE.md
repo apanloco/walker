@@ -6,6 +6,8 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 **Simplicity is a hard requirement.** If something feels complex, stop and simplify before continuing. Prefer deleting code over adding abstractions. Prefer the browser's built-in behavior over reimplementing it in JavaScript. Prefer one SQL query over an in-memory cache. If the simple approach has a tradeoff (e.g., a page flash on navigation), accept it.
 
+**Look broadly before implementing.** Every new feature is an opportunity to simplify what's already there. Before writing new code, check existing structs, queries, and patterns — consolidate, remove dead code, and unify duplicates. Don't add a new thing next to an old thing that does almost the same job.
+
 **CLAUDE.md must be updated as part of every task.** Any change to behavior, architecture, protocol, or UI must be reflected here before the task is considered done. This file is what future conversations read first — if it's wrong, everything built on it will be wrong.
 
 ## License
@@ -287,7 +289,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 
 Required. Migrations run automatically on startup. The server will not start without `DATABASE_URL`.
 
-**users:** `id` (UUID PK, auto-generated), `email` (unique), `display_name` (max 100 chars), `avatar_url`, `weight_kg` (default 70.0), `created_at`
+**users:** `id` (UUID PK, auto-generated), `email` (unique), `display_name` (max 100 chars), `avatar_url`, `weight_kg` (default 70.0), `is_admin` (default false), `created_at`
 
 **tokens:** `token` (PK, SHA-256 hashed), `user_id` (UUID FK → users), `created_at`, `expires_at` (default 180 days). Token lookup queries DB directly on each request — no in-memory cache.
 
@@ -305,8 +307,9 @@ Required. Migrations run automatically on startup. The server will not start wit
 
 - **Primary key:** UUID (auto-generated, immutable, used everywhere)
 - **Email:** unique, used for OAuth provider matching, changeable
-- **Email never exposed** to frontend
+- **Email never exposed** to frontend — unless the viewer is an admin
 - Same email from different OAuth providers = same user
+- **Admin:** `is_admin` flag on the users table. Admins see extra info (e.g. email) on profile pages. Set via direct SQL: `UPDATE users SET is_admin = true WHERE email = '...'`
 
 ### Why Steps Are Only Used for State Detection
 

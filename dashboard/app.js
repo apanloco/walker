@@ -440,6 +440,7 @@ function renderProfile(p) {
       }
       <div>
         <div class="text-3xl font-extrabold text-white">${p.name}</div>
+        ${p.email ? '<div class="text-xs text-gray-500 mt-0.5">' + p.email + '</div>' : ''}
         ${p.streak > 0 ? '<div class="flex items-center gap-1.5 mt-1"><span class="text-amber-400 text-lg">&#128293;</span><span class="text-amber-400 font-bold text-lg">' + p.streak + '</span><span class="text-amber-400/70 text-sm">day streak</span></div>' : ''}
         ${liveBadge}
       </div>
