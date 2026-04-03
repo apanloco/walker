@@ -217,8 +217,8 @@ pub async fn reopen_previous_walking_segment(
     Ok(result.rows_affected() > 0)
 }
 
-/// Recompute a segment's duration, calories, and distance from a given end-time expression.
-/// Calorie math uses the SQL `total_calories()` function — single source of truth in the DB.
+/// Recompute a segment's duration and distance from a given end-time expression.
+/// Calories are computed at query time via SQL functions — not stored.
 ///   - `end_time`: SQL expression for the segment's end time (e.g. "now()" or "last_heartbeat_at")
 ///   - `extra_sets`: additional SET clauses (e.g. "open = false")
 fn open_segment_update_sql(end_time: &str, extra_sets: &str) -> String {
@@ -226,9 +226,6 @@ fn open_segment_update_sql(end_time: &str, extra_sets: &str) -> String {
     format!(
         "UPDATE segments SET
             duration_s = EXTRACT(EPOCH FROM {end_time} - started_at),
-            calories_kcal = CASE WHEN moving THEN
-                total_calories(speed_kmh, weight_kg, EXTRACT(EPOCH FROM {end_time} - started_at)::REAL)
-                ELSE 0 END,
             distance_m = CASE WHEN moving THEN
                 speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM {end_time} - started_at)
                 ELSE 0 END,
@@ -407,12 +404,10 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
             let distance_m = speed_kmh * 1000.0 / 3600.0 * duration_s;
 
             sqlx::query(
-                "INSERT INTO segments (user_id, started_at, moving, speed_kmh, duration_s, open, weight_kg, calories_kcal, distance_m)
+                "INSERT INTO segments (user_id, started_at, moving, speed_kmh, duration_s, open, weight_kg, distance_m)
                  VALUES ($1,
                          (CURRENT_DATE - ($2 || ' days')::INTERVAL) + ($3 || ' seconds')::INTERVAL,
-                         true, $4, $5, false, $6,
-                         total_calories($4, $6, $5),
-                         $7)",
+                         true, $4, $5, false, $6, $7)",
             )
             .bind(user_id)
             .bind(days_ago)

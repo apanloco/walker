@@ -195,11 +195,12 @@ async fn handle_ws_live_user(mut socket: WebSocket, ctx: SharedLive, user_id: uu
 pub fn spawn_disconnect_checker(ctx: SharedLive) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.tick().await; // Skip the first instant tick.
         loop {
             interval.tick().await;
 
-            // Close segments for disconnected users (no heartbeat in 5s).
-            match db::close_stale_segments(&ctx.db_pool, 5.0).await {
+            // Close segments for disconnected users (no heartbeat in 30s).
+            match db::close_stale_segments(&ctx.db_pool, 30.0).await {
                 Ok(user_ids) => {
                     // Push null segment to viewers watching disconnected users.
                     for user_id in &user_ids {

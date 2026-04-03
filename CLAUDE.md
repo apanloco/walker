@@ -66,7 +66,7 @@ Two features: `client` (BLE, terminal UI) and `server` (HTTP, WebSocket, DB). Bo
 
 2. **Activity state** — three-phase state machine inferred from step data by the client:
    - **INIT** → **WALKING**: first step increase detected. Only transition out of INIT.
-   - **WALKING** → **IDLE**: no step increase for idle timeout (speed-dependent: 10s below 2 km/h, 5s at 2+ km/h).
+   - **WALKING** → **IDLE**: no step increase for idle timeout (see [Timeouts & Intervals](#timeouts--intervals)).
    - **IDLE** → **WALKING**: step increase detected.
    - **INIT → IDLE**: impossible. Can't claim idle without first confirming walking.
    - **Any reset** (Pausing/Paused/Standby/Off/BLE reconnect) → **INIT**.
@@ -109,7 +109,7 @@ Authorization: Bearer <token>
 
 `state` is one of `walking`, `idle`, or `stopped`. Speed is always in **km/h**.
 
-Sent on state change + every ~1 second heartbeat while connected. Client does **not** report during treadmill `Pausing`/`Paused` state — these trigger an immediate `stopped` + tracker reset instead.
+Sent on state change + every heartbeat interval while connected. Client does **not** report during treadmill `Pausing`/`Paused` state — these trigger an immediate `stopped` + tracker reset instead.
 
 ### Segment-Based Tracking
 
@@ -134,10 +134,10 @@ No in-memory state. The database (segments table) is the single source of truth.
 1. Close current segment (set duration, calories, distance, `open = false`).
 2. Insert new segment with `open = true`.
 
-**False idle absorption** (`idle→walking` when idle segment < 10s):
-Light users (e.g. kids) can cause flaky step detection, creating spurious idle segments. When the server receives a `walking` update and the current open segment is idle with age < `MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS` (10s):
+**False idle absorption** (`idle→walking` when idle segment is very short):
+Light users (e.g. kids) can cause flaky step detection, creating spurious idle segments. When the server receives a `walking` update and the current open segment is idle with age below the false idle max age:
 1. Delete the short idle segment.
-2. Reopen the previous walking segment (if it has a recent `last_heartbeat_at` within `MAX_ABSORB_REOPEN_WINDOW_SECS` (15s) and matching speed).
+2. Reopen the previous walking segment (if it has a recent `last_heartbeat_at` within the false idle reopen window and matching speed).
 3. If no eligible previous walking segment exists, fall through to the normal path (open a new walking segment).
 This keeps idle detection fast on the client while cleaning up sensor noise on the server.
 
@@ -145,14 +145,14 @@ This keeps idle detection fast on the client while cleaning up sensor noise on t
 1. Close current segment. No new segment.
 
 **On heartbeat** (same state, nothing changed):
-1. Update current segment's duration/calories/distance + `last_heartbeat_at` in DB.
+1. Update current segment's duration/distance + `last_heartbeat_at` in DB.
 
-**On disconnect** (no heartbeat for 5 seconds):
-1. Close current segment using `last_heartbeat_at` as end time.
+**On disconnect** (no heartbeat for the disconnect threshold):
+1. Close current segment using `last_heartbeat_at` as end time (so duration is accurate regardless of detection delay).
 
 #### Crash Recovery
 
-On server startup, close any stale open segments where `last_heartbeat_at` is more than 60 seconds in the past. Duration was kept fresh by heartbeats, so data is accurate to ~1 second.
+On server startup, close any stale open segments where `last_heartbeat_at` exceeds the crash recovery threshold. Duration was kept fresh by heartbeats, so data is accurate to ~1 second.
 
 #### Daily Totals
 
@@ -195,11 +195,31 @@ Source: [Compendium of Physical Activities — Walking](https://pacompendium.com
 
 Default 70.0 kg. Stored on each segment at creation time so historical calories remain accurate if weight changes. The Activity page shows weight per segment, making users aware it affects their numbers.
 
+### Timeouts & Intervals
+
+All timing constants in one place. Referenced throughout this doc.
+
+| Name | Value | Where | Purpose |
+|------|-------|-------|---------|
+| Client heartbeat | ~1s | reporter.rs | How often the client sends updates to the server |
+| Client idle detection | 5s (≥2 km/h), 10s (<2 km/h) | activity.rs | Speed-dependent: no step increase → IDLE |
+| BLE silent disconnect | 10s | ble.rs | Detect treadmill that stopped sending data |
+| BLE reconnect retry | 3s | ble.rs | Delay before scanning again after disconnect |
+| BLE quick scan | 1s | ble.rs | Fast scan before falling back to full scan |
+| Server disconnect check interval | 5s | live.rs | How often the server checks for stale heartbeats |
+| Server disconnect threshold | 30s | live.rs | No heartbeat for this long → close segment |
+| Crash recovery threshold | 60s | mod.rs | On startup, close segments stale longer than this |
+| False idle max age | 10s | update.rs | Short idle segments below this are absorbed |
+| False idle reopen window | 15s | update.rs | Previous walking segment must be this recent to reopen |
+| Session gap | 60 min | app.js | Gap between segments that creates a new session |
+| Dashboard leaderboard poll | 5s | app.js | Client-side polling interval for leaderboard |
+| Token expiry | 180 days | db.rs | Bearer tokens expire after this |
+
 ### Server → Viewer Protocol
 
-**`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + every 5s disconnect check. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
+**`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + on each disconnect check interval. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
 
-**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). Pushes the open segment JSON on every heartbeat (~1/s) and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
+**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). Pushes the open segment JSON on every heartbeat and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "duration_s": 120.5,
              "weight_kg": 70.0, "calories_kcal": 12.3, "active_calories_kcal": 8.5,
@@ -234,7 +254,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - Today / This Week / All Time top 10
 - Live status indicators (pulsing green dot for walking, yellow for idle)
 - Clickable names → profile page (redirects to leaderboard if not logged in)
-- Polls server every 5 seconds (client-side `setInterval`) + refetches on `/ws/live` notifications
+- Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications
 
 **Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
@@ -253,7 +273,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - Gaps between segments shown as "paused X min Y sec" dividers
 - **Two-channel architecture** for smart DOM updates (today only):
   - `GET /api/activity/{id}?date=` — closed segments, fetched on page load + `/ws/live` notifications
-  - `/ws/live/{id}` — live segment pushed by server on every heartbeat (~1/s) and state change
+  - `/ws/live/{id}` — live segment pushed by server on every heartbeat and state change
   - Closed segments rendered once into `#activity-closed`, not replaced on heartbeat
   - Live segment updated in `#activity-live` without touching closed segments
   - Per-user WebSocket connected on page load only for today, auto-reconnects on disconnect
@@ -274,7 +294,7 @@ Required. Migrations run automatically on startup. The server will not start wit
 **segments:** source of truth for all tracking data
 - `id` BIGSERIAL PK, `user_id` UUID FK, `started_at` TIMESTAMPTZ
 - `moving` BOOLEAN, `speed_kmh` REAL, `duration_s` REAL, `open` BOOLEAN
-- `weight_kg` REAL (snapshot at creation), `calories_kcal` REAL, `distance_m` REAL
+- `weight_kg` REAL (snapshot at creation), `distance_m` REAL
 - `last_heartbeat_at` TIMESTAMPTZ (updated on every heartbeat, used for disconnect detection)
 - Unique partial index enforces at most one open segment per user
 - Composite index on `(user_id, started_at)` for history queries
@@ -331,7 +351,7 @@ Both optional. Login page shows only configured providers.
 {"server": "https://walker.akerud.se", "token": "...", "email": "...", "display_name": "..."}
 ```
 
-**Server-side:** tokens stored as SHA-256 hashes. Plaintext only exists in the client's auth file and in memory during requests. Tokens expire after 180 days.
+**Server-side:** tokens stored as SHA-256 hashes. Plaintext only exists in the client's auth file and in memory during requests. Tokens expire after the token expiry period.
 
 `--dev` flag on `login`, `logout`, `walk`, `simulate` switches between files.
 
@@ -356,7 +376,7 @@ walker walk               # connect to treadmill, report to production server
 walker walk --dev         # report to local dev server
 ```
 
-Auto-reconnects on disconnect. Keeps scanning if no treadmill found. 10s timeout for silent disconnects. Quick 1s scan before full scan. macOS: checks Bluetooth permission before init (prevents CoreBluetooth segfault).
+Auto-reconnects on disconnect. Keeps scanning if no treadmill found. macOS: checks Bluetooth permission before init (prevents CoreBluetooth segfault). See [Timeouts & Intervals](#timeouts--intervals) for BLE timing.
 
 ### `simulate`
 ```
@@ -415,10 +435,9 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 
 ## BLE Resilience
 
-- Auto-reconnect on disconnect (3s retry)
-- 10s timeout detects silent disconnects
+- Auto-reconnect on disconnect (see [Timeouts & Intervals](#timeouts--intervals) for timing)
 - Keeps scanning if no treadmill found
-- Quick scan (1s) before full scan
+- Quick scan before full scan
 - Step and activity trackers reset on Pausing/Paused/Standby/Off and on BLE reconnect
 - macOS: Bluetooth permission pre-check prevents CoreBluetooth segfault
 
