@@ -27,7 +27,7 @@ async fn get_closed_segments(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !db::user_exists(pool, caller).await {
+    if db::get_user(pool, caller).await.is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
@@ -94,7 +94,7 @@ async fn get_current_segment(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !db::user_exists(pool, caller).await {
+    if db::get_user(pool, caller).await.is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 

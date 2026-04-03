@@ -43,16 +43,16 @@ async fn get_profile(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !db::user_exists(pool, caller).await {
+    let Some(caller) = db::get_user(pool, caller).await else {
         return StatusCode::UNAUTHORIZED.into_response();
-    }
+    };
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
         return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
     let user = sqlx::query(
-        "SELECT display_name, avatar_url, weight_kg, created_at::TEXT FROM users WHERE id = $1",
+        "SELECT display_name, avatar_url, weight_kg, email, created_at::TEXT FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool.as_ref())
@@ -67,6 +67,7 @@ async fn get_profile(
     let name: String = sqlx::Row::get(&user, "display_name");
     let avatar: Option<String> = sqlx::Row::get(&user, "avatar_url");
     let weight: f32 = sqlx::Row::get(&user, "weight_kg");
+    let email: String = sqlx::Row::get(&user, "email");
     let member_since: String = sqlx::Row::get(&user, "created_at");
     let id_str = id.to_string();
 
@@ -145,7 +146,7 @@ async fn get_profile(
         _ => None,
     };
 
-    axum::Json(serde_json::json!({
+    let mut resp = serde_json::json!({
         "id": id_str,
         "name": name,
         "avatar_url": avatar,
@@ -180,5 +181,9 @@ async fn get_profile(
         },
         "last_7_days": last_7,
         "heatmap": year_history,
-    })).into_response()
+    });
+    if caller.is_admin {
+        resp["email"] = serde_json::json!(email);
+    }
+    axum::Json(resp).into_response()
 }

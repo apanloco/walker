@@ -33,7 +33,7 @@ async fn handle_update(
         return StatusCode::UNAUTHORIZED;
     };
     let pool = &ctx.db_pool;
-    let Ok(Some(user)) = db::lookup_token(pool, token).await else {
+    let Ok(Some(user)) = db::find_user_from_token(pool, token).await else {
         return StatusCode::UNAUTHORIZED;
     };
 
@@ -135,7 +135,7 @@ async fn handle_set_weight(
         return StatusCode::UNAUTHORIZED;
     };
     let pool = &ctx.db_pool;
-    let Ok(Some(user)) = db::lookup_token(pool, token).await else {
+    let Ok(Some(user)) = db::find_user_from_token(pool, token).await else {
         return StatusCode::UNAUTHORIZED;
     };
 

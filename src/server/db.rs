@@ -3,7 +3,6 @@ use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use tracing::info;
 
-use super::live::TokenUser;
 
 /// Hash a token with SHA-256 for storage. Tokens are high-entropy random
 /// strings, so a fast hash is sufficient (no need for bcrypt/argon2).
@@ -24,13 +23,27 @@ pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     Ok(pool)
 }
 
-/// Check if a user exists by ID (for cookie auth).
-pub async fn user_exists(pool: &PgPool, id: uuid::Uuid) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false)
+#[derive(Clone)]
+pub struct User {
+    pub id: uuid::Uuid,
+    pub display_name: String,
+    pub is_admin: bool,
+}
+
+/// Look up a user by ID. Returns None if not found.
+pub async fn get_user(pool: &PgPool, id: uuid::Uuid) -> Option<User> {
+    let row = sqlx::query(
+        "SELECT id, display_name, is_admin FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+    Some(User {
+        id: row.get("id"),
+        display_name: row.get("display_name"),
+        is_admin: row.get("is_admin"),
+    })
 }
 
 /// Ensure a user exists in the DB. Upserts display_name and avatar on login.
@@ -97,9 +110,9 @@ pub async fn store_token(pool: &PgPool, token: &str, user_id: uuid::Uuid) -> any
 }
 
 /// Look up a token (by its SHA-256 hash) and return the associated user.
-pub async fn lookup_token(pool: &PgPool, token: &str) -> anyhow::Result<Option<TokenUser>> {
+pub async fn find_user_from_token(pool: &PgPool, token: &str) -> anyhow::Result<Option<User>> {
     let row = sqlx::query(
-        "SELECT u.id, u.email, u.display_name, u.avatar_url
+        "SELECT u.id, u.display_name, u.is_admin
          FROM tokens t JOIN users u ON t.user_id = u.id
          WHERE t.token = $1 AND t.expires_at > NOW()",
     )
@@ -107,11 +120,10 @@ pub async fn lookup_token(pool: &PgPool, token: &str) -> anyhow::Result<Option<T
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| TokenUser {
+    Ok(row.map(|r| User {
         id: r.get::<uuid::Uuid, _>("id"),
-        email: r.get("email"),
         display_name: r.get("display_name"),
-        avatar_url: r.get("avatar_url"),
+        is_admin: r.get("is_admin"),
     }))
 }
 
