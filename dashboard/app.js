@@ -40,6 +40,10 @@ function initPage() {
   } else if (page === 'activity') {
     if (!currentActivityId) currentActivityId = loggedInId;
     currentActivityDate = new URLSearchParams(location.search).get('date');
+    // Treat today's date the same as no date (enables live WebSocket).
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    if (currentActivityDate === todayStr) currentActivityDate = null;
     // Update heading.
     const heading = document.getElementById('activity-heading');
     if (heading) {
