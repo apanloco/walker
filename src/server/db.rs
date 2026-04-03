@@ -3,7 +3,6 @@ use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use tracing::info;
 
-
 /// Hash a token with SHA-256 for storage. Tokens are high-entropy random
 /// strings, so a fast hash is sufficient (no need for bcrypt/argon2).
 pub fn hash_token(token: &str) -> String {
@@ -32,13 +31,11 @@ pub struct User {
 
 /// Look up a user by ID. Returns None if not found.
 pub async fn get_user(pool: &PgPool, id: uuid::Uuid) -> Option<User> {
-    let row = sqlx::query(
-        "SELECT id, display_name, is_admin FROM users WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .ok()??;
+    let row = sqlx::query("SELECT id, display_name, is_admin FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()??;
     Some(User {
         id: row.get("id"),
         display_name: row.get("display_name"),
@@ -46,33 +43,34 @@ pub async fn get_user(pool: &PgPool, id: uuid::Uuid) -> Option<User> {
     })
 }
 
-/// Ensure a user exists in the DB. Upserts display_name and avatar on login.
-pub async fn upsert_user(
+/// Upsert user and return their UUID in a single atomic query.
+pub async fn upsert_user_returning_id(
     pool: &PgPool,
     email: &str,
     display_name: &str,
     avatar_url: Option<&str>,
-) -> anyhow::Result<()> {
-    sqlx::query(
+) -> anyhow::Result<uuid::Uuid> {
+    let row = sqlx::query(
         "INSERT INTO users (email, display_name, avatar_url)
          VALUES ($1, $2, $3)
-         ON CONFLICT (email) DO UPDATE SET display_name = $2, avatar_url = $3",
+         ON CONFLICT (email) DO UPDATE SET display_name = $2, avatar_url = $3
+         RETURNING id",
     )
     .bind(email)
     .bind(display_name)
     .bind(avatar_url)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
-    Ok(())
+    Ok(row.get("id"))
 }
 
-/// Get a user's public UUID by email.
-pub async fn get_user_id(pool: &PgPool, email: &str) -> anyhow::Result<uuid::Uuid> {
-    let row = sqlx::query("SELECT id FROM users WHERE email = $1")
-        .bind(email)
+/// Check if a user exists by ID.
+pub async fn user_exists(pool: &PgPool, id: uuid::Uuid) -> anyhow::Result<bool> {
+    let row = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) as exists")
+        .bind(id)
         .fetch_one(pool)
         .await?;
-    Ok(row.get("id"))
+    Ok(row.get("exists"))
 }
 
 /// Set a user's weight.
@@ -305,11 +303,7 @@ pub async fn close_stale_segments(
     for row in &rows {
         let id: i64 = row.get("id");
         let user_id: uuid::Uuid = row.get("user_id");
-        if let Err(e) = sqlx::query(&sql)
-            .bind(id)
-            .execute(pool)
-            .await
-        {
+        if let Err(e) = sqlx::query(&sql).bind(id).execute(pool).await {
             tracing::error!(error = %e, segment_id = id, "Failed to close stale segment");
         } else {
             user_ids.push(user_id);
@@ -370,7 +364,7 @@ pub async fn get_current_segment_json(
                     "open": true,
                 }
             })
-        },
+        }
         None => serde_json::json!({"segment": null}),
     };
     Ok(json.to_string())

@@ -10,6 +10,18 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 **CLAUDE.md must be updated as part of every task.** Any change to behavior, architecture, protocol, or UI must be reflected here before the task is considered done. This file is what future conversations read first — if it's wrong, everything built on it will be wrong.
 
+## TODO
+
+1. **XSS in `app.js`** — User-controlled strings (names, avatar URLs, emails) are interpolated directly into HTML via template literals and string concatenation. Add an `escapeHtml()` helper and apply it to all user-sourced values before HTML insertion.
+
+2. **Silent error swallowing across the server** — Pervasive `.unwrap_or(None)`, `.unwrap_or_default()`, and `.ok()?` patterns make "user doesn't exist" indistinguishable from "database is down." Switch DB lookups to `Result<Option<T>>` and propagate errors to callers.
+
+3. ~~**Auth race conditions**~~ — Fixed by auth overhaul (localhost callback replaces device codes entirely).
+
+4. **Reporter has no retry or feedback** — `reporter.rs` fire-and-forgets HTTP posts with `tokio::spawn`. Lost updates are silent. Add bounded retry (1–2 attempts with short delay) for transient network failures.
+
+5. ~~**Device code memory leak**~~ — Fixed by auth overhaul (no more in-memory device codes — no device codes at all).
+
 ## License
 
 MIT. Use super permissive licenses for all code and dependencies where possible.
@@ -281,7 +293,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
   - Per-user WebSocket connected on page load only for today, auto-reconnects on disconnect
   - Historical dates show closed segments only (no WebSocket)
 
-**Login:** dashboard OAuth via cookie (`walker_id`), same callback URL as CLI (state=web distinguishes). Dev mode: cookie auto-set via middleware.
+**Login:** navigating to a login-required page while logged out redirects to `/login`. Login page is server-rendered with buttons for configured providers. After OAuth, `walker_id` cookie is set and user is redirected to `/`. Dev mode: "Dev Login" button available (no auto-login).
 
 **URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/activity/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load and shows the right content. Legacy `#hash` URLs redirect automatically.
 
@@ -334,18 +346,51 @@ Design: **steps detect, speed measures, server computes.**
 
 ## Authentication
 
-### OAuth Flow (unified callback)
+### Login Page (`/login`)
 
-Both CLI (device code flow) and dashboard (web login) use the **same callback URL**: `/auth/github/callback`. The `state` parameter distinguishes them:
-- CLI: `state=<user_code>` → completes device code auth
+Server-rendered page at `/login`. Shows buttons for each configured provider. In dev mode, also shows a "Dev Login" button. The same page handles both flows:
+
+- **Dashboard (web) login:** user navigates to `/login` (or is redirected there). No `cli_port` param. After OAuth, sets `walker_id` cookie and redirects to `/`.
+- **CLI login:** user runs `walker login`, CLI starts a local HTTP server on a random port, opens browser to `/login?cli_port=P`. After OAuth, server redirects browser to `http://localhost:P/callback?token=...&email=...&name=...`. CLI receives it, saves credentials, done.
+
+Only one login page, one template, one place to add/remove providers.
+
+### OAuth Flow (localhost callback)
+
+Each provider has one callback URL (e.g., `/auth/github/callback`, `/auth/google/callback`). The `state` parameter distinguishes CLI from dashboard:
+- CLI: `state=cli:<port>` → server redirects browser to `http://localhost:<port>/callback?token=...` after auth
 - Dashboard: `state=web` → sets `walker_id` cookie, redirects to `/`
+
+**CLI login lifecycle:**
+1. CLI starts local HTTP server on random port `P`
+2. CLI opens browser to `<server>/login?cli_port=P`
+3. User clicks a provider, completes OAuth normally
+4. Server creates user + token, redirects browser to `http://localhost:P/callback?token=XXX&email=...&name=...`
+5. CLI's local server receives the request, saves credentials to `auth.json`, serves "Success! Return to your terminal."
+6. CLI shuts down local server, prints confirmation
+
+No polling, no device codes, no in-memory state. The OAuth secrets stay on the server (CLI never sees them). `ServerState` is read-only config behind `Arc` — no `RwLock` needed.
 
 ### Providers
 
-- **GitHub:** `WALKER_GITHUB_CLIENT_ID` + `WALKER_GITHUB_CLIENT_SECRET`
-- **Google:** `WALKER_GOOGLE_CLIENT_ID` + `WALKER_GOOGLE_CLIENT_SECRET`
+All optional. Login page shows only configured/available providers.
 
-Both optional. Login page shows only configured providers.
+- **Dev:** available only in `--dev` mode. No external service — `/auth/dev/callback` creates/upserts a dev user (`dev@walker.local` / "Dev User") and completes the flow using the same code paths as real providers (upsert, token creation, redirect).
+
+**GitHub setup:**
+1. Go to GitHub → Settings → Developer Settings → OAuth Apps → New OAuth App
+2. Set "Authorization callback URL" to `https://walker.akerud.se/auth/github/callback` (prod) or `http://localhost:3000/auth/github/callback` (dev)
+3. Set `WALKER_GITHUB_CLIENT_ID` and `WALKER_GITHUB_CLIENT_SECRET`
+
+**Google setup:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
+2. Create Credentials → OAuth 2.0 Client ID → Web application
+3. Under "Authorized redirect URIs", add `https://walker.akerud.se/auth/google/callback` (prod) and/or `http://localhost:3000/auth/google/callback` (dev)
+4. Set `WALKER_GOOGLE_CLIENT_ID` and `WALKER_GOOGLE_CLIENT_SECRET`
+
+### Stale Cookie Recovery
+
+Middleware checks the `walker_id` cookie on every request. If the cookie references a user that doesn't exist in the database (e.g., after `reset_db.sh`), the cookie is cleared and the request continues as unauthenticated. No error page — the user just sees the logged-out state and can log in again.
 
 ### Token Security
 
@@ -358,12 +403,22 @@ Both optional. Login page shows only configured providers.
 
 `--dev` flag on `login`, `logout`, `walk`, `simulate` switches between files.
 
+### Dev Mode Auth
+
+Dev mode requires full login, same as production. No auto-injected cookies or hardcoded tokens. The only difference is the dev provider is available:
+
+1. Start server: `cargo run -- listen --dev` (seeds dev user + history, but no auto-login)
+2. Dashboard: go to `localhost:3000` → see login page → click "Dev Login" → logged in
+3. CLI: `walker login --dev` → opens browser to login page → click "Dev Login" → token saved
+
+This exercises the full auth pipeline (upsert, token creation, cookie/redirect) with zero external dependencies.
+
 ## CLI Commands
 
 ### `login` / `logout`
 ```
 walker login              # production (walker.akerud.se)
-walker login --dev        # local dev (localhost:3000, dev token)
+walker login --dev        # local dev (localhost:3000, opens browser to login page)
 walker logout             # remove production credentials
 walker logout --dev       # remove dev credentials
 ```
@@ -424,13 +479,13 @@ walker -v trace walk                 # set log verbosity (trace, debug, info, wa
 
 ```bash
 ./reset_db.sh                        # fresh Postgres in Docker
-cargo run -- listen --dev             # auto-connects to local Postgres
-cargo run -- login --dev
+cargo run -- listen --dev             # auto-connects to local Postgres, seeds history
+cargo run -- login --dev              # opens browser → click "Dev Login"
 cargo run -- simulate --dev --count 5
-# Open http://localhost:3000/dev/login (sets dashboard cookie)
+# Dashboard: open http://localhost:3000 → click "Dev Login" on login page
 ```
 
-Dev mode: dashboard served from disk (edit HTML/JS, refresh browser, no rebuild). Fake historical data seeded on first startup. Dev login URL logged on server startup.
+Dev mode: dashboard served from disk (edit HTML/JS, refresh browser, no rebuild). Fake historical data seeded on first startup. Full login required (no auto-injected cookies) — use the "Dev Login" button on the login page.
 
 ## Deployment (Render.com)
 

@@ -78,12 +78,18 @@ async fn register_simulated_user(
     let token = format!("sim-{}", payload.email);
 
     let pool = &ctx.db_pool;
-    if let Err(e) = db::upsert_user(pool, &payload.email, &payload.name, None).await {
-        error!(error = %e, "Failed to upsert simulated user");
-    }
-    let id = db::get_user_id(pool, &payload.email)
-        .await
-        .unwrap_or_else(|_| uuid::Uuid::new_v4());
+    let id = match db::upsert_user_returning_id(pool, &payload.email, &payload.name, None).await {
+        Ok(id) => id,
+        Err(e) => {
+            error!(error = %e, "Failed to upsert simulated user");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(SimulateRegisterResponse {
+                    token: String::new(),
+                }),
+            );
+        }
+    };
     if let Err(e) = db::store_token(pool, &token, id).await {
         error!(error = %e, "Failed to store simulated user token");
     }

@@ -1,4 +1,10 @@
-use axum::{Router, extract::{Path, State}, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
 
 use super::db;
 use super::live::SharedLive;

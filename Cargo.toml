@@ -36,3 +36,4 @@ sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres
 # Shared
 rand = "0.10.0"
 sha2 = "0.10"
+urlencoding = "2"

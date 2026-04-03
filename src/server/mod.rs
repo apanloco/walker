@@ -85,21 +85,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         );
     }
 
-    // Dev mode: create a test token.
+    // Dev mode: seed dev user + history (but no auto-login — user must log in).
     if config.dev {
-        let dev_token = "dev-token-walker";
-        let dev_email = "dev@walker.local";
-        let dev_name = "Dev User";
-
-        db::upsert_user(&pool, dev_email, dev_name, None).await?;
-        let id = db::get_user_id(&pool, dev_email).await?;
-        let _ = db::store_token(&pool, dev_token, id).await;
+        let id = db::upsert_user_returning_id(&pool, "dev@walker.local", "Dev User", None).await?;
         db::seed_dev_history(&pool, id).await?;
 
-        info!(
-            "Dev mode: test token = '{dev_token}', dashboard login: http://localhost:{}/dev/login",
-            config.port
-        );
+        info!("Dev mode: login at http://localhost:{}/login", config.port);
     }
 
     let live_ctx = Arc::new(live::LiveContext {
@@ -109,48 +100,48 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         dev_mode: config.dev,
     });
 
-    let auth_state = Arc::new(RwLock::new(auth::ServerState::new(
-        config.base_url,
-        config.github_client_id,
-        config.github_client_secret,
-        config.google_client_id,
-        config.google_client_secret,
-        pool.clone(),
-    )));
+    let auth_state: auth::SharedState = Arc::new(auth::ServerState {
+        github_client_id: config.github_client_id,
+        github_client_secret: config.github_client_secret,
+        google_client_id: config.google_client_id,
+        google_client_secret: config.google_client_secret,
+        base_url: config.base_url,
+        db_pool: pool.clone(),
+        dev: config.dev,
+    });
 
     // Lightweight timer for disconnect detection.
     live::spawn_disconnect_checker(live_ctx.clone());
 
-    let mut app = Router::new()
+    // Stale cookie middleware: if walker_id references a non-existent user, clear it.
+    let stale_pool = pool.clone();
+    let app = Router::new()
         .merge(auth::routes().with_state(auth_state))
         .merge(update::routes().with_state(live_ctx.clone()))
         .merge(live::routes().with_state(live_ctx.clone()))
         .merge(leaderboard::routes().with_state(live_ctx.clone()))
         .merge(profile::routes().with_state(live_ctx.clone()))
         .merge(activity::routes().with_state(live_ctx))
-        .merge(dashboard::routes(config.dev));
-
-    // In dev mode, inject walker_id cookie on every response so the dashboard
-    // works without OAuth. No manual /dev/login step needed.
-    if config.dev {
-        let dev_user_id = db::get_user_id(&pool, "dev@walker.local")
-            .await
-            .ok()
-            .map(|id| id.to_string())
-            .unwrap_or_default();
-        let cookie_value = format!("walker_id={dev_user_id}; Path=/; SameSite=Lax");
-        app = app.layer(axum::middleware::map_response(
-            move |mut response: axum::response::Response| {
-                let cookie = cookie_value.clone();
+        .merge(dashboard::routes(config.dev))
+        .layer(axum::middleware::map_response(
+            move |request_headers: axum::http::HeaderMap,
+                  mut response: axum::response::Response| {
+                let pool = stale_pool.clone();
                 async move {
-                    response
-                        .headers_mut()
-                        .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
+                    if let Some(user_id) = cookie_user_id(&request_headers) {
+                        if !db::user_exists(&pool, user_id).await.unwrap_or(true) {
+                            // User doesn't exist — clear the cookie.
+                            if let Ok(val) = "walker_id=; Path=/; Max-Age=0".parse() {
+                                response
+                                    .headers_mut()
+                                    .insert(axum::http::header::SET_COOKIE, val);
+                            }
+                        }
+                    }
                     response
                 }
             },
         ));
-    }
 
     let addr = format!("0.0.0.0:{}", config.port);
     info!("Walker server listening on http://{addr}");

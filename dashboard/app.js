@@ -132,7 +132,7 @@ if (loggedInId) {
     })
     .catch(() => {});
 } else {
-  navUser.innerHTML = '<a href="/auth/web/github" class="text-sm text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a>';
+  navUser.innerHTML = '<a href="/login" class="text-sm text-walker-500 hover:text-walker-600 font-medium">Login</a>';
 }
 
 // -- Leaderboard --
@@ -206,7 +206,7 @@ function formatDuration(secs) {
 function fetchProfile() {
   if (!currentProfileId) {
     document.getElementById('profile-content').innerHTML =
-      '<div class="text-gray-600 italic text-center py-12"><a href="/auth/web/github" class="text-walker-500 hover:text-walker-600 font-medium">Login with GitHub</a> to see your stats.</div>';
+      '<div class="text-gray-600 italic text-center py-12"><a href="/login" class="text-walker-500 hover:text-walker-600 font-medium">Login</a> to see your stats.</div>';
     return;
   }
   fetch('/api/profile/' + encodeURIComponent(currentProfileId))
