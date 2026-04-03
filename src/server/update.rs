@@ -69,8 +69,7 @@ async fn handle_update(
                     // Recalculate duration/calories/distance immediately so the
                     // WebSocket push below sends fresh values (not stale pre-close ones).
                     if let Ok(Some(walk_seg)) = db::get_open_segment(pool, user.id).await {
-                        let met = db::met_for_speed_kmh(walk_seg.speed_kmh);
-                        let _ = db::update_open_segment(pool, walk_seg.id, met).await;
+                        let _ = db::update_open_segment(pool, walk_seg.id).await;
                     }
                     debug!(user = %user.display_name, age_secs = seg.age_secs,
                            "Absorbed flaky idle segment");
@@ -86,8 +85,7 @@ async fn handle_update(
         if !absorbed {
             // Close current segment if any.
             if let Some(seg) = &open_seg {
-                let met = db::met_for_speed_kmh(seg.speed_kmh);
-                if let Err(e) = db::close_segment(pool, seg.id, met).await {
+                if let Err(e) = db::close_segment(pool, seg.id).await {
                     error!(error = %e, segment_id = seg.id, "Failed to close segment");
                 }
             }
@@ -110,8 +108,7 @@ async fn handle_update(
         live::push_user_segment(&ctx, user.id).await;
     } else if let Some(seg) = &open_seg {
         // Heartbeat: update segment duration + last_heartbeat_at.
-        let met = db::met_for_speed_kmh(seg.speed_kmh);
-        if let Err(e) = db::update_open_segment(pool, seg.id, met).await {
+        if let Err(e) = db::update_open_segment(pool, seg.id).await {
             error!(error = %e, segment_id = seg.id, "Failed to update segment");
         }
 

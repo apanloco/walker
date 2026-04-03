@@ -86,6 +86,7 @@ async fn get_profile(
         vec![]
     });
     let total_calories: f64 = all_time.iter().map(|d| d.calories_kcal).sum();
+    let total_active_calories: f64 = all_time.iter().map(|d| d.active_calories_kcal).sum();
     let total_distance: f64 = all_time.iter().map(|d| d.distance_km).sum();
     let total_active: i32 = all_time.iter().map(|d| d.active_secs).sum();
     let total_days = all_time.len();
@@ -94,6 +95,10 @@ async fn get_profile(
     let best_day_calories = all_time
         .iter()
         .map(|d| d.calories_kcal)
+        .fold(0.0f64, f64::max);
+    let best_day_active_calories = all_time
+        .iter()
+        .map(|d| d.active_calories_kcal)
         .fold(0.0f64, f64::max);
     let best_day_distance = all_time
         .iter()
@@ -108,15 +113,28 @@ async fn get_profile(
         .filter(|d| d.date == today_str)
         .map(|d| d.calories_kcal)
         .sum();
+    let today_active_cal: f64 = all_time
+        .iter()
+        .filter(|d| d.date == today_str)
+        .map(|d| d.active_calories_kcal)
+        .sum();
     let last_7: Vec<_> = year_history.iter().rev().take(7).rev().cloned().collect();
     let week_cal: f64 = last_7.iter().map(|d| d.calories_kcal).sum();
+    let week_active_cal: f64 = last_7.iter().map(|d| d.active_calories_kcal).sum();
     let month_cal: f64 = year_history
         .iter()
         .rev()
         .take(30)
         .map(|d| d.calories_kcal)
         .sum();
+    let month_active_cal: f64 = year_history
+        .iter()
+        .rev()
+        .take(30)
+        .map(|d| d.active_calories_kcal)
+        .sum();
     let year_cal: f64 = year_history.iter().map(|d| d.calories_kcal).sum();
+    let year_active_cal: f64 = year_history.iter().map(|d| d.active_calories_kcal).sum();
 
     // Check if currently walking via open segment in DB.
     let live_status = match db::get_open_segment(pool, id).await {
@@ -137,19 +155,26 @@ async fn get_profile(
         "live": live_status,
         "totals": {
             "calories_kcal": total_calories,
+            "active_calories_kcal": total_active_calories,
             "distance_km": total_distance,
             "active_secs": total_active,
             "active_days": total_days,
         },
         "periods": {
             "today_kcal": today_cal,
+            "today_active_kcal": today_active_cal,
             "week_kcal": week_cal,
+            "week_active_kcal": week_active_cal,
             "month_kcal": month_cal,
+            "month_active_kcal": month_active_cal,
             "year_kcal": year_cal,
+            "year_active_kcal": year_active_cal,
             "all_time_kcal": total_calories,
+            "all_time_active_kcal": total_active_calories,
         },
         "records": {
             "best_day_calories_kcal": best_day_calories,
+            "best_day_active_calories_kcal": best_day_active_calories,
             "best_day_distance_km": best_day_distance,
             "best_day_active_secs": best_day_active,
         },

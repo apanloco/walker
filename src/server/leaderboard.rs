@@ -43,6 +43,7 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> Json<serde_json::Valu
                     "name": e.name,
                     "avatar_url": e.avatar_url,
                     "calories_kcal": e.calories_kcal,
+                    "active_calories_kcal": e.active_calories_kcal,
                     "status": status,
                     "speed_kmh": speed,
                 })
