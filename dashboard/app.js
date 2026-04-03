@@ -170,8 +170,9 @@ function renderLeaderboard(elementId, entries) {
         <div class="flex items-center gap-1 mt-0.5">${statusIndicator(e)}</div>
       </div>
       <div class="text-right">
-        <div class="text-lg font-bold text-white">${e.calories_kcal.toFixed(1)}</div>
-        <div class="text-[10px] text-gray-500 -mt-0.5">kcal</div>
+        <div class="text-lg font-bold text-white">${e.active_calories_kcal.toFixed(1)}</div>
+        <div class="text-[10px] text-gray-500 -mt-0.5">active kcal</div>
+        <div class="text-[10px] text-gray-600 -mt-0.5">${e.calories_kcal.toFixed(1)} total</div>
       </div>
     </div>
   `).join('');
@@ -216,7 +217,7 @@ function buildHeatmap(days) {
   let maxCal = 0;
   days.forEach(d => {
     dataMap[d.date] = d;
-    if (d.calories_kcal > maxCal) maxCal = d.calories_kcal;
+    if (d.active_calories_kcal > maxCal) maxCal = d.active_calories_kcal;
   });
 
   const colors = ['bg-gray-600', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
@@ -246,7 +247,7 @@ function buildHeatmap(days) {
       String(d.getMonth() + 1).padStart(2, '0') + '-' +
       String(d.getDate()).padStart(2, '0');
     const data = dataMap[dateStr];
-    const cal = data ? data.calories_kcal : 0;
+    const cal = data ? data.active_calories_kcal : 0;
 
     let level = 0;
     if (cal > 0 && maxCal > 0) {
@@ -264,7 +265,7 @@ function buildHeatmap(days) {
     }
 
     const tooltip = data
-      ? dateStr + ': ' + data.calories_kcal.toFixed(1) + ' kcal, ' + data.distance_km.toFixed(2) + ' km'
+      ? dateStr + ': ' + data.active_calories_kcal.toFixed(1) + ' active kcal (' + data.calories_kcal.toFixed(1) + ' total), ' + data.distance_km.toFixed(2) + ' km'
       : dateStr + ': no activity';
 
     const isGold = data && data.distance_km >= goldThresholdKm;
@@ -315,7 +316,7 @@ function buildHeatmap(days) {
         return;
       }
       const data = dataMap[cell.dateStr];
-      const food = data ? buildFoodEquiv(data.calories_kcal, false) : '';
+      const food = data ? buildFoodEquiv(data.active_calories_kcal, false) : '';
       const tooltipLines = cell.tooltip.replace(': ', '<br>').replace(', ', '<br>');
       const showBelow = row < 3;
       const posY = showBelow ? 'top-full mt-2' : 'bottom-full mb-2';
@@ -323,7 +324,7 @@ function buildHeatmap(days) {
       const nearLeft = col < 6;
       const posX = nearRight ? 'right-0' : nearLeft ? 'left-0' : 'left-1/2 -translate-x-1/2';
 
-      const isClickable = data && data.calories_kcal > 0 && currentProfileId;
+      const isClickable = data && data.active_calories_kcal > 0 && currentProfileId;
       const tag = isClickable ? 'a' : 'div';
       const href = isClickable ? ' href="/activity/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
       html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
@@ -413,16 +414,16 @@ function renderProfile(p) {
   }
 
   // Weekly bars.
-  const maxWeekCal = Math.max(...last7.map(d => d.calories_kcal), 0.1);
+  const maxWeekCal = Math.max(...last7.map(d => d.active_calories_kcal), 0.1);
   const weekBars = last7.map(d => {
-    const pct = Math.max((d.calories_kcal / maxWeekCal) * 100, 3);
+    const pct = Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3);
     const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
     return '<div class="flex items-center gap-2">' +
       '<div class="w-8 text-right text-[11px] text-gray-500">' + dayName + '</div>' +
       '<div class="flex-1 h-5 bg-gray-800 rounded-full overflow-hidden">' +
         '<div class="h-full bg-walker-500 rounded-full transition-all" style="width:' + pct + '%"></div>' +
       '</div>' +
-      '<div class="w-16 text-right text-xs text-gray-400">' + d.calories_kcal.toFixed(1) + ' kcal</div>' +
+      '<div class="w-16 text-right text-xs text-gray-400">' + d.active_calories_kcal.toFixed(1) + ' kcal</div>' +
     '</div>';
   }).join('');
 
@@ -443,8 +444,9 @@ function renderProfile(p) {
     <!-- Stats grid -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
-        <div class="text-3xl font-extrabold text-white">${p.totals.calories_kcal.toFixed(1)}</div>
-        <div class="text-xs text-gray-500 mt-1">Total kcal</div>
+        <div class="text-3xl font-extrabold text-white">${p.totals.active_calories_kcal.toFixed(1)}</div>
+        <div class="text-xs text-gray-500 mt-1">Active kcal</div>
+        <div class="text-xs text-gray-600">${p.totals.calories_kcal.toFixed(1)} total</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
         <div class="text-3xl font-extrabold text-white">${p.totals.distance_km.toFixed(2)}</div>
@@ -463,8 +465,9 @@ function renderProfile(p) {
     <!-- Personal records -->
     <div class="grid grid-cols-3 gap-3 mb-8">
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
-        <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (kcal)</div>
-        <div class="text-2xl font-bold text-white">${p.records.best_day_calories_kcal.toFixed(1)}</div>
+        <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (active kcal)</div>
+        <div class="text-2xl font-bold text-white">${p.records.best_day_active_calories_kcal.toFixed(1)}</div>
+        <div class="text-xs text-gray-600">${p.records.best_day_calories_kcal.toFixed(1)} total</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (km)</div>
@@ -479,11 +482,11 @@ function renderProfile(p) {
     <!-- You Burned -->
     <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">You Burned</h3>
-      ${buildFoodRow('Today', periods.today_kcal || 0)}
-      ${buildFoodRow('This Week', periods.week_kcal || 0)}
-      ${buildFoodRow('This Month', periods.month_kcal || 0)}
-      ${buildFoodRow('This Year', periods.year_kcal || 0)}
-      ${buildFoodRow('All Time', periods.all_time_kcal || 0)}
+      ${buildFoodRow('Today', periods.today_active_kcal || 0)}
+      ${buildFoodRow('This Week', periods.week_active_kcal || 0)}
+      ${buildFoodRow('This Month', periods.month_active_kcal || 0)}
+      ${buildFoodRow('This Year', periods.year_active_kcal || 0)}
+      ${buildFoodRow('All Time', periods.all_time_active_kcal || 0)}
     </div>
 
     <!-- Heatmap -->
@@ -598,7 +601,7 @@ function renderClosedSegments(segments) {
     const sessionStart = new Date(session[session.length - 1].started_at);
     const firstSeg = session[0];
     const sessionEnd = new Date(new Date(firstSeg.started_at).getTime() + firstSeg.duration_s * 1000);
-    const totalCal = session.filter(s => s.moving).reduce((sum, s) => sum + s.calories_kcal, 0);
+    const totalCal = session.filter(s => s.moving).reduce((sum, s) => sum + s.active_calories_kcal, 0);
     const totalDist = session.filter(s => s.moving).reduce((sum, s) => sum + s.distance_m, 0);
     const totalDur = session.filter(s => s.moving).reduce((sum, s) => sum + s.duration_s, 0);
 
@@ -682,7 +685,7 @@ function renderLiveSegment(seg) {
   const statsEl = document.getElementById('session-stats-0');
   const endEl = document.getElementById('session-end-0');
   if (statsEl && seg.moving) {
-    const cal = (window._sessionClosedCal || 0) + seg.calories_kcal;
+    const cal = (window._sessionClosedCal || 0) + seg.active_calories_kcal;
     const dist = (window._sessionClosedDist || 0) + seg.distance_m;
     const dur = (window._sessionClosedDur || 0) + seg.duration_s;
     statsEl.textContent = cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur);
@@ -696,7 +699,7 @@ function renderLiveSegment(seg) {
 function renderSegmentCard(seg) {
   const dur = seg.duration_s;
   if (seg.moving) {
-    const met = metForSpeed(seg.speed_kmh);
+    const met = seg.met;
     const segStart = new Date(seg.started_at);
     const segEnd = new Date(segStart.getTime() + dur * 1000);
     let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
@@ -707,7 +710,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-400" style="grid-column:2">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
     html += '<span class="text-white font-medium" style="grid-column:3">' + formatDurationLong(dur) + '</span>';
     html += '<span class="text-gray-300" style="grid-column:4">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
-    html += '<span class="text-gray-300" style="grid-column:5">' + seg.calories_kcal.toFixed(1) + ' kcal</span>';
+    html += '<span class="text-gray-300" style="grid-column:5">' + seg.active_calories_kcal.toFixed(1) + ' <span class="text-gray-600">/ ' + seg.calories_kcal.toFixed(1) + '</span> kcal</span>';
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(1) + '</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
@@ -739,18 +742,6 @@ function formatDate(date) {
 
 function formatTime(date) {
   return date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
-}
-
-function metForSpeed(kmh) {
-  if (kmh < 1.6) return 2.1;
-  if (kmh <= 3.0) return 2.8;
-  if (kmh <= 3.9) return 3.0;
-  if (kmh <= 4.7) return 3.5;
-  if (kmh <= 5.5) return 3.8;
-  if (kmh <= 6.3) return 4.8;
-  if (kmh <= 7.1) return 5.8;
-  if (kmh <= 7.9) return 6.8;
-  return 8.3;
 }
 
 // -- WebSocket (state changes only) + polling --

@@ -44,7 +44,10 @@ async fn get_closed_segments(
     let rows = if date_filter.is_empty() {
         sqlx::query(
             "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                    calories_kcal, distance_m
+                    total_calories(speed_kmh, weight_kg, duration_s) AS calories_kcal,
+                    active_calories(speed_kmh, weight_kg, duration_s) AS active_calories_kcal,
+                    met_for_speed(speed_kmh) AS met,
+                    distance_m
              FROM segments
              WHERE user_id = $1 AND started_at::date = CURRENT_DATE AND open = false
              ORDER BY started_at ASC",
@@ -55,7 +58,10 @@ async fn get_closed_segments(
     } else {
         sqlx::query(
             "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                    calories_kcal, distance_m
+                    total_calories(speed_kmh, weight_kg, duration_s) AS calories_kcal,
+                    active_calories(speed_kmh, weight_kg, duration_s) AS active_calories_kcal,
+                    met_for_speed(speed_kmh) AS met,
+                    distance_m
              FROM segments
              WHERE user_id = $1 AND started_at::date = $2::date AND open = false
              ORDER BY started_at ASC",
@@ -98,7 +104,10 @@ async fn get_current_segment(
 
     let row = sqlx::query(
         "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                calories_kcal, distance_m
+                total_calories(speed_kmh, weight_kg, duration_s) AS calories_kcal,
+                active_calories(speed_kmh, weight_kg, duration_s) AS active_calories_kcal,
+                met_for_speed(speed_kmh) AS met,
+                distance_m
          FROM segments
          WHERE user_id = $1 AND open = true",
     )
@@ -124,6 +133,8 @@ fn segment_json(r: &sqlx::postgres::PgRow, open: bool) -> serde_json::Value {
         "duration_s": r.get::<f32, _>("duration_s"),
         "weight_kg": r.get::<f32, _>("weight_kg"),
         "calories_kcal": r.get::<f32, _>("calories_kcal"),
+        "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
+        "met": r.get::<f32, _>("met"),
         "distance_m": r.get::<f32, _>("distance_m"),
         "open": open,
     })

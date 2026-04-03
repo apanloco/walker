@@ -218,16 +218,16 @@ pub async fn reopen_previous_walking_segment(
 }
 
 /// Recompute a segment's duration, calories, and distance from a given end-time expression.
-/// All calorie/distance math lives here — one formula, one place.
+/// Calorie math uses the SQL `total_calories()` function — single source of truth in the DB.
 ///   - `end_time`: SQL expression for the segment's end time (e.g. "now()" or "last_heartbeat_at")
-///   - `extra_sets`: additional SET clauses (e.g. "open = false" or "weight_kg = $3")
+///   - `extra_sets`: additional SET clauses (e.g. "open = false")
 fn open_segment_update_sql(end_time: &str, extra_sets: &str) -> String {
     let comma = if extra_sets.is_empty() { "" } else { "," };
     format!(
         "UPDATE segments SET
             duration_s = EXTRACT(EPOCH FROM {end_time} - started_at),
             calories_kcal = CASE WHEN moving THEN
-                ($2 * weight_kg * EXTRACT(EPOCH FROM {end_time} - started_at) / 3600.0)::REAL
+                total_calories(speed_kmh, weight_kg, EXTRACT(EPOCH FROM {end_time} - started_at)::REAL)
                 ELSE 0 END,
             distance_m = CASE WHEN moving THEN
                 speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM {end_time} - started_at)
@@ -239,20 +239,18 @@ fn open_segment_update_sql(end_time: &str, extra_sets: &str) -> String {
 }
 
 /// Close a segment: compute final values and mark as closed.
-pub async fn close_segment(pool: &PgPool, segment_id: i64, met: f64) -> anyhow::Result<()> {
+pub async fn close_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<()> {
     sqlx::query(&open_segment_update_sql("now()", "open = false"))
         .bind(segment_id)
-        .bind(met as f32)
         .execute(pool)
         .await?;
     Ok(())
 }
 
 /// Update an open segment's duration, calories, and distance (heartbeat).
-pub async fn update_open_segment(pool: &PgPool, segment_id: i64, met: f64) -> anyhow::Result<()> {
+pub async fn update_open_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<()> {
     sqlx::query(&open_segment_update_sql("now()", ""))
         .bind(segment_id)
-        .bind(met as f32)
         .execute(pool)
         .await?;
     Ok(())
@@ -272,8 +270,7 @@ pub async fn update_open_segment_weight(
             .bind(weight_kg)
             .execute(pool)
             .await?;
-        let met = met_for_speed_kmh(seg.speed_kmh);
-        update_open_segment(pool, seg.id, met).await?;
+        update_open_segment(pool, seg.id).await?;
     }
     Ok(())
 }
@@ -286,7 +283,7 @@ pub async fn close_stale_segments(
     threshold_secs: f64,
 ) -> anyhow::Result<Vec<uuid::Uuid>> {
     let rows = sqlx::query(
-        "SELECT id, user_id, speed_kmh FROM segments
+        "SELECT id, user_id FROM segments
          WHERE open = true
            AND EXTRACT(EPOCH FROM now() - last_heartbeat_at) > $1",
     )
@@ -299,11 +296,8 @@ pub async fn close_stale_segments(
     for row in &rows {
         let id: i64 = row.get("id");
         let user_id: uuid::Uuid = row.get("user_id");
-        let speed: f32 = row.get("speed_kmh");
-        let met = met_for_speed_kmh(speed as f64);
         if let Err(e) = sqlx::query(&sql)
             .bind(id)
-            .bind(met as f32)
             .execute(pool)
             .await
         {
@@ -340,7 +334,10 @@ pub async fn get_current_segment_json(
 ) -> anyhow::Result<String> {
     let row = sqlx::query(
         "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                calories_kcal, distance_m
+                total_calories(speed_kmh, weight_kg, duration_s) AS calories_kcal,
+                active_calories(speed_kmh, weight_kg, duration_s) AS active_calories_kcal,
+                met_for_speed(speed_kmh) AS met,
+                distance_m
          FROM segments
          WHERE user_id = $1 AND open = true",
     )
@@ -349,58 +346,28 @@ pub async fn get_current_segment_json(
     .await?;
 
     let json = match row {
-        Some(r) => serde_json::json!({
-            "segment": {
-                "started_at": r.get::<String, _>("started_at"),
-                "moving": r.get::<bool, _>("moving"),
-                "speed_kmh": r.get::<f32, _>("speed_kmh"),
-                "duration_s": r.get::<f32, _>("duration_s"),
-                "weight_kg": r.get::<f32, _>("weight_kg"),
-                "calories_kcal": r.get::<f32, _>("calories_kcal"),
-                "distance_m": r.get::<f32, _>("distance_m"),
-                "open": true,
-            }
-        }),
+        Some(r) => {
+            serde_json::json!({
+                "segment": {
+                    "started_at": r.get::<String, _>("started_at"),
+                    "moving": r.get::<bool, _>("moving"),
+                    "speed_kmh": r.get::<f32, _>("speed_kmh"),
+                    "duration_s": r.get::<f32, _>("duration_s"),
+                    "weight_kg": r.get::<f32, _>("weight_kg"),
+                    "calories_kcal": r.get::<f32, _>("calories_kcal"),
+                    "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
+                    "met": r.get::<f32, _>("met"),
+                    "distance_m": r.get::<f32, _>("distance_m"),
+                    "open": true,
+                }
+            })
+        },
         None => serde_json::json!({"segment": null}),
     };
     Ok(json.to_string())
 }
 
 // -- Seed dev data --
-
-/// MET value for a given walking speed (Compendium 2024, treadmill-specific).
-pub fn met_for_speed_kmh(speed_kmh: f64) -> f64 {
-    if speed_kmh < 1.6 {
-        2.1
-    } else if speed_kmh <= 3.0 {
-        2.8
-    } else if speed_kmh <= 3.9 {
-        3.0
-    } else if speed_kmh <= 4.7 {
-        3.5
-    } else if speed_kmh <= 5.5 {
-        3.8
-    } else if speed_kmh <= 6.3 {
-        4.8
-    } else if speed_kmh <= 7.1 {
-        5.8
-    } else if speed_kmh <= 7.9 {
-        6.8
-    } else {
-        8.3
-    }
-}
-
-/// Compute calories in kcal for a segment.
-pub fn compute_calories_kcal(speed_kmh: f64, weight_kg: f64, duration_s: f64) -> f64 {
-    let met = met_for_speed_kmh(speed_kmh);
-    met * weight_kg * duration_s / 3600.0
-}
-
-/// Compute distance in meters for a segment.
-pub fn compute_distance_m(speed_kmh: f64, duration_s: f64) -> f64 {
-    speed_kmh * 1000.0 / 3600.0 * duration_s
-}
 
 /// Seed fake historical data for dev mode using segments.
 pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Result<()> {
@@ -437,14 +404,15 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
         for _ in 0..num_segments {
             let duration_s: f64 = rng.random_range(600..3600) as f64;
             let speed_kmh: f64 = 2.0 + rng.random_range(0..30) as f64 * 0.1;
-            let calories_kcal = compute_calories_kcal(speed_kmh, weight_kg, duration_s);
-            let distance_m = compute_distance_m(speed_kmh, duration_s);
+            let distance_m = speed_kmh * 1000.0 / 3600.0 * duration_s;
 
             sqlx::query(
                 "INSERT INTO segments (user_id, started_at, moving, speed_kmh, duration_s, open, weight_kg, calories_kcal, distance_m)
                  VALUES ($1,
                          (CURRENT_DATE - ($2 || ' days')::INTERVAL) + ($3 || ' seconds')::INTERVAL,
-                         true, $4, $5, false, $6, $7, $8)",
+                         true, $4, $5, false, $6,
+                         total_calories($4, $6, $5),
+                         $7)",
             )
             .bind(user_id)
             .bind(days_ago)
@@ -452,7 +420,6 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
             .bind(speed_kmh as f32)
             .bind(duration_s as f32)
             .bind(weight_kg as f32)
-            .bind(calories_kcal as f32)
             .bind(distance_m as f32)
             .execute(pool)
             .await?;
@@ -477,6 +444,7 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
 pub struct DailySnapshot {
     pub date: String,
     pub calories_kcal: f64,
+    pub active_calories_kcal: f64,
     pub distance_km: f64,
     pub active_secs: i32,
 }
@@ -488,7 +456,8 @@ pub async fn user_history(
 ) -> anyhow::Result<Vec<DailySnapshot>> {
     let rows = sqlx::query(
         "SELECT started_at::date::TEXT AS date,
-                COALESCE(SUM(calories_kcal), 0)::REAL AS total_kcal,
+                COALESCE(SUM(total_calories(speed_kmh, weight_kg, duration_s)), 0)::REAL AS total_kcal,
+                COALESCE(SUM(active_calories(speed_kmh, weight_kg, duration_s)), 0)::REAL AS active_kcal,
                 COALESCE(SUM(distance_m), 0)::REAL AS total_dist,
                 COALESCE(SUM(duration_s), 0)::REAL AS total_dur
          FROM segments
@@ -506,11 +475,13 @@ pub async fn user_history(
         .iter()
         .map(|r| {
             let kcal: f32 = r.get("total_kcal");
+            let active_kcal: f32 = r.get("active_kcal");
             let dist: f32 = r.get("total_dist");
             let dur: f32 = r.get("total_dur");
             DailySnapshot {
                 date: r.get("date"),
                 calories_kcal: kcal as f64,
+                active_calories_kcal: active_kcal as f64,
                 distance_km: dist as f64 / 1000.0,
                 active_secs: dur as i32,
             }
@@ -546,6 +517,7 @@ pub struct LeaderboardEntry {
     pub name: String,
     pub avatar_url: Option<String>,
     pub calories_kcal: f64,
+    pub active_calories_kcal: f64,
 }
 
 async fn query_leaderboard(
@@ -554,10 +526,11 @@ async fn query_leaderboard(
 ) -> anyhow::Result<Vec<LeaderboardEntry>> {
     let sql = format!(
         "SELECT u.id, u.display_name AS name, u.avatar_url,
-                COALESCE(SUM(s.calories_kcal), 0)::REAL AS total_kcal
+                COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS total_kcal,
+                COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal
          FROM users u LEFT JOIN segments s ON u.id = s.user_id AND s.moving = true {date_filter}
          GROUP BY u.id, u.display_name, u.avatar_url
-         HAVING COALESCE(SUM(s.calories_kcal), 0) > 0
+         HAVING COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0) > 0
          ORDER BY total_kcal DESC LIMIT 10"
     );
 
@@ -570,6 +543,7 @@ async fn query_leaderboard(
             name: r.get("name"),
             avatar_url: r.get("avatar_url"),
             calories_kcal: r.get::<f32, _>("total_kcal") as f64,
+            active_calories_kcal: r.get::<f32, _>("active_kcal") as f64,
         })
         .collect())
 }

@@ -160,15 +160,22 @@ All totals computed by `SUM` over segments for a given date. No separate accumul
 
 #### Auditability
 
-Every closed segment stores: `speed_kmh`, `duration_s`, `weight_kg`, `calories_kcal`, `distance_m`. Anyone can verify: duration × speed = distance. MET(speed) × weight × duration / 3600 = calories.
+Every closed segment stores: `speed_kmh`, `duration_s`, `weight_kg`, `distance_m`. Anyone can verify: duration × speed = distance. Calories are computed at query time via SQL functions — never stored.
 
 ### Calorie Formula
 
-`calories_kcal = MET(speed_kmh) × weight_kg × duration_s / 3600`
+Two calorie values computed at query time via PostgreSQL functions (`total_calories()`, `active_calories()`):
 
-Stored on each segment. Weight is also stored per segment — historical segments retain the weight used at the time.
+- **Total:** `MET(speed_kmh) × weight_kg × duration_s / 3600` — full energy expenditure including resting metabolic rate
+- **Active:** `(MET(speed_kmh) - 1) × weight_kg × duration_s / 3600` — exercise-only contribution above resting (MET=1)
+
+Both values are returned in all API responses. The dashboard shows active as primary, total as secondary context.
+
+Calories are **not stored** in the database — they're pure functions of speed, weight, and duration, computed on read. This means formula changes apply retroactively to all historical data with no migration.
 
 ### MET Table (Compendium of Physical Activities, 2024, treadmill-specific)
+
+The MET lookup is defined once as a PostgreSQL function (`met_for_speed()`). No duplication in Rust or JavaScript.
 
 | km/h | MET |
 |------|-----|
@@ -195,14 +202,15 @@ Default 70.0 kg. Stored on each segment at creation time so historical calories 
 **`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). Pushes the open segment JSON on every heartbeat (~1/s) and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "duration_s": 120.5,
-             "weight_kg": 70.0, "calories_kcal": 12.3, "distance_m": 107.1, "open": true}}
+             "weight_kg": 70.0, "calories_kcal": 12.3, "active_calories_kcal": 8.5,
+             "met": 3.5, "distance_m": 107.1, "open": true}}
 ```
 Returns `{"segment": null}` when the user has no open segment.
 
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
 {
-  "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "status": "walking", "speed_kmh": 4.0}],
+  "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0}],
   "weekly": [...],
   "all_time": [...]
 }
