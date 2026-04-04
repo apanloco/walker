@@ -68,6 +68,11 @@ function getCookie(name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+function setTheme(name) {
+  document.documentElement.className = document.documentElement.className.replace(/\btheme-\S+/g, '').trim() + ' theme-' + name;
+  document.cookie = 'walker_theme=' + name + '; Path=/; Max-Age=31536000';
+}
+
 // -- Auth state --
 
 const loggedInId = getCookie('walker_id');
@@ -109,7 +114,11 @@ function buildAvatarButton(avatarUrl) {
       '<button id="avatar-btn" onclick="toggleUserMenu()" class="flex items-center">' + avatar + '</button>' +
       '<div id="user-menu" class="hidden absolute right-0 mt-2 w-44 bg-surface-800 border border-gray-700 rounded-lg shadow-xl z-50 py-1">' +
         '<a href="/profile/' + loggedInId + '" class="block px-4 py-2 text-sm text-gray-300 hover:bg-surface-900 hover:text-white">Profile</a>' +
-        '<a class="block px-4 py-2 text-sm text-gray-600 cursor-not-allowed">Settings</a>' +
+        '<div class="border-t border-gray-700 my-1"></div>' +
+        '<div class="px-4 py-1.5 text-xs text-gray-500">Theme</div>' +
+        '<a href="javascript:void(0)" onclick="setTheme(\'gruvbox\')" class="block px-4 py-1.5 text-sm text-gray-300 hover:bg-surface-900 hover:text-white cursor-pointer">Gruvbox</a>' +
+        '<a href="javascript:void(0)" onclick="setTheme(\'c64\')" class="block px-4 py-1.5 text-sm text-gray-300 hover:bg-surface-900 hover:text-white cursor-pointer">C64</a>' +
+        '<a href="javascript:void(0)" onclick="setTheme(\'material\')" class="block px-4 py-1.5 text-sm text-gray-300 hover:bg-surface-900 hover:text-white cursor-pointer">Material</a>' +
         '<div class="border-t border-gray-700 my-1"></div>' +
         '<a href="javascript:void(0)" onclick="logout()" class="block px-4 py-2 text-sm text-gray-400 hover:bg-surface-900 hover:text-red-400">Logout</a>' +
       '</div>' +
@@ -149,12 +158,12 @@ function rankBadge(i) {
 
 function statusIndicator(e) {
   if (e.status === 'walking') {
-    return '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>' +
-      '<span class="text-green-400 text-xs">' + e.speed_kmh.toFixed(1) + ' km/h</span>';
+    return '<span class="inline-block w-2 h-2 rounded-full bg-status-walking mr-1.5 live-blink"></span>' +
+      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h</span>';
   }
   if (e.status === 'idle') {
-    return '<span class="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-1.5"></span>' +
-      '<span class="text-yellow-500 text-xs">Idle</span>';
+    return '<span class="inline-block w-2 h-2 rounded-full bg-status-idle mr-1.5"></span>' +
+      '<span class="text-status-idle text-xs">Idle</span>';
   }
   return '';
 }
@@ -233,8 +242,8 @@ function buildHeatmap(days) {
     if (d.active_calories_kcal > maxCal) maxCal = d.active_calories_kcal;
   });
 
-  const colors = ['bg-gray-600', 'bg-green-900', 'bg-green-700', 'bg-green-500', 'bg-green-400'];
-  const goldColor = 'bg-amber-400';
+  const colors = ['bg-heat-0', 'bg-heat-1', 'bg-heat-2', 'bg-heat-3', 'bg-heat-4'];
+  const goldColor = 'bg-heat-gold';
   const goldThresholdKm = 8.0; // ~10,000 steps — research-backed daily goal.
 
   // Generate exactly 53 weeks of dates ending this week.
@@ -301,7 +310,7 @@ function buildHeatmap(days) {
   const sq = 18; // square size in px
   const gap = 3;
   const cellSize = sq + gap;
-  html += '<div class="relative mb-1 text-[11px] text-gray-500" style="height: 16px; margin-left: ' + (28 + gap) + 'px; width: ' + (totalWeeks * cellSize) + 'px">';
+  html += '<div class="relative mb-1 text-[11px] text-gray-500" style="height: 16px; margin-left: calc(var(--hm-label-w, 28px) + ' + gap + 'px); width: ' + (totalWeeks * cellSize) + 'px">';
   let lastLabelX = -50;
   months.forEach(m => {
     const x = m.week * cellSize;
@@ -315,7 +324,7 @@ function buildHeatmap(days) {
   // Grid — CSS grid for uniform spacing.
   const dayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
   const cols = weeks.length + 1; // +1 for day labels column
-  html += '<div style="display:grid; grid-template-columns: 28px repeat(' + weeks.length + ', ' + sq + 'px); grid-template-rows: repeat(7, ' + sq + 'px); gap: ' + gap + 'px">';
+  html += '<div style="display:grid; grid-template-columns: var(--hm-label-w, 28px) repeat(' + weeks.length + ', ' + sq + 'px); grid-template-rows: repeat(7, ' + sq + 'px); gap: ' + gap + 'px">';
 
   // Day labels in first column.
   dayLabels.forEach((l, row) => {
@@ -352,7 +361,7 @@ function buildHeatmap(days) {
   html += '</div>';
 
   // Legend.
-  html += '<div class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-500" style="margin-left: ' + (28 + gap) + 'px">';
+  html += '<div class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-500" style="margin-left: calc(var(--hm-label-w, 28px) + ' + gap + 'px)">';
   html += '<span>Less</span>';
   colors.forEach(c => {
     html += '<div class="rounded-sm ' + c + '" style="width:' + sq + 'px;height:' + sq + 'px"></div>';
@@ -422,22 +431,32 @@ function renderProfile(p) {
   // Live status badge.
   let liveBadge = '';
   if (p.live && p.live.status === 'walking') {
-    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span><span class="text-green-400 text-sm font-medium">Walking at ' + p.live.speed_kmh.toFixed(1) + ' km/h</span></div>';
+    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-status-walking live-blink"></span><span class="text-status-walking text-sm font-medium">Walking at ' + p.live.speed_kmh.toFixed(1) + ' km/h</span></div>';
   } else if (p.live && p.live.status === 'idle') {
-    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500"></span><span class="text-yellow-500 text-sm">Idle</span></div>';
+    liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-status-idle"></span><span class="text-status-idle text-sm">Idle</span></div>';
   }
 
   // Weekly bars.
+  const now = new Date();
+  const todayStr = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
   const maxWeekCal = Math.max(...last7.map(d => d.active_calories_kcal), 0.1);
   const weekBars = last7.map(d => {
     const pct = Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3);
     const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
+    const isToday = d.date === todayStr;
+    const isLive = isToday && p.live && p.live.status === 'walking';
+    const isIdle = isToday && p.live && p.live.status === 'idle';
+    const liveDot = isLive
+      ? '<span class="inline-block w-2.5 h-2.5 shrink-0 rounded-full bg-status-walking live-blink mr-1.5"></span>'
+      : isIdle
+        ? '<span class="inline-block w-2.5 h-2.5 shrink-0 rounded-full bg-status-idle mr-1.5"></span>'
+        : '';
     return '<div class="flex items-center gap-2">' +
-      '<div class="w-8 text-right text-[11px] text-gray-500">' + dayName + '</div>' +
-      '<div class="flex-1 h-5 bg-gray-800 rounded-full overflow-hidden">' +
+      '<div class="text-right text-sm text-gray-400 shrink-0 flex items-center justify-end" style="width: var(--bar-day-w, 32px)">' + liveDot + dayName + '</div>' +
+      '<div class="flex-1 h-7 bg-gray-700 rounded-full overflow-hidden">' +
         '<div class="h-full bg-walker-500 rounded-full transition-all" style="width:' + pct + '%"></div>' +
       '</div>' +
-      '<div class="w-16 text-right text-xs text-gray-400">' + d.active_calories_kcal.toFixed(1) + ' kcal</div>' +
+      '<div class="text-right text-sm text-gray-400 whitespace-nowrap pl-2 shrink-0" style="width: var(--bar-kcal-w, 120px)">' + d.active_calories_kcal.toFixed(1) + ' active kcal</div>' +
     '</div>';
   }).join('');
 
@@ -454,6 +473,20 @@ function renderProfile(p) {
         ${p.streak > 0 ? '<div class="flex items-center gap-1.5 mt-1"><span class="text-amber-400 text-lg">&#128293;</span><span class="text-amber-400 font-bold text-lg">' + p.streak + '</span><span class="text-amber-400/70 text-sm">day streak</span></div>' : ''}
         ${liveBadge}
       </div>
+    </div>
+
+    <!-- Last 7 days -->
+    ${last7.length > 0 ? `
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Last 7 Days</h3>
+      <div class="space-y-2">${weekBars}</div>
+    </div>
+    ` : ''}
+
+    <!-- Heatmap -->
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8 overflow-visible">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Daily Heatmap</h3>
+      ${buildHeatmap(p.heatmap)}
     </div>
 
     <!-- Stats grid -->
@@ -495,7 +528,7 @@ function renderProfile(p) {
     </div>
 
     <!-- You Burned -->
-    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8">
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">You Burned</h3>
       ${buildFoodRow('Today', periods.today_active_kcal || 0)}
       ${buildFoodRow('This Week', periods.week_active_kcal || 0)}
@@ -503,20 +536,6 @@ function renderProfile(p) {
       ${buildFoodRow('This Year', periods.year_active_kcal || 0)}
       ${buildFoodRow('All Time', periods.all_time_active_kcal || 0)}
     </div>
-
-    <!-- Heatmap -->
-    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-8 overflow-visible">
-      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Daily Heatmap</h3>
-      ${buildHeatmap(p.heatmap)}
-    </div>
-
-    <!-- Last 7 days -->
-    ${last7.length > 0 ? `
-    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800">
-      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Last 7 Days</h3>
-      <div class="space-y-2">${weekBars}</div>
-    </div>
-    ` : ''}
   `;
 
   // Render emojis consistently with Twemoji.
@@ -723,7 +742,7 @@ function renderSegmentCard(seg) {
     let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
     html += '<div class="segment-row text-sm">';
     if (seg.open) {
-      html += '<div class="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0 animate-pulse" style="grid-column:1"></div>';
+      html += '<div class="w-2.5 h-2.5 rounded-full bg-status-walking flex-shrink-0 live-blink" style="grid-column:1"></div>';
     }
     html += '<span class="text-gray-400" style="grid-column:2">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
     html += '<span class="text-white font-medium" style="grid-column:3">' + formatDurationLong(dur) + '</span>';
@@ -736,7 +755,7 @@ function renderSegmentCard(seg) {
     html += '</div>';
     return html;
   } else {
-    let html = '<div class="text-center text-xs text-yellow-600/50 py-1.5">';
+    let html = '<div class="text-center text-xs text-gray-600 py-1.5">';
     html += 'idle ' + formatDurationLong(dur);
     html += '</div>';
     return html;
@@ -775,6 +794,8 @@ function connect() {
     // Refetch closed segments — a segment was just opened or closed.
     if (currentActivityId) fetchActivityClosed();
     fetchLeaderboard();
+    // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
+    if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();
   };
 
   ws.onclose = () => {
