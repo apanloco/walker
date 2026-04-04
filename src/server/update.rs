@@ -41,7 +41,13 @@ async fn handle_update(
     let stopped = payload.state == "stopped";
 
     // Query DB for current open segment.
-    let open_seg = db::get_open_segment(pool, user.id).await.unwrap_or(None);
+    let open_seg = match db::get_open_segment(pool, user.id).await {
+        Ok(seg) => seg,
+        Err(e) => {
+            error!(error = %e, "Failed to query open segment");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
 
     // Determine if state changed.
     let state_changed = match &open_seg {

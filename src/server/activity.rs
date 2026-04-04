@@ -33,8 +33,13 @@ async fn get_closed_segments(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if db::get_user(pool, caller).await.is_none() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    match db::get_user(pool, caller).await {
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "get_user failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Ok(Some(_)) => {}
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
@@ -78,15 +83,17 @@ async fn get_closed_segments(
         .await
     };
 
-    let segments: Vec<serde_json::Value> = match rows {
-        Ok(rows) => rows.iter().map(|r| segment_json(r, false)).collect(),
+    match rows {
+        Ok(rows) => {
+            let segments: Vec<serde_json::Value> =
+                rows.iter().map(|r| segment_json(r, false)).collect();
+            axum::Json(serde_json::json!({ "segments": segments })).into_response()
+        }
         Err(e) => {
             tracing::error!(error = %e, "activity closed segments query failed");
-            vec![]
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
-    };
-
-    axum::Json(serde_json::json!({ "segments": segments })).into_response()
+    }
 }
 
 /// The one open segment — live data, polled by the client on its own schedule.
@@ -100,8 +107,13 @@ async fn get_current_segment(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if db::get_user(pool, caller).await.is_none() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    match db::get_user(pool, caller).await {
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "get_user failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Ok(Some(_)) => {}
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
@@ -128,7 +140,7 @@ async fn get_current_segment(
         Ok(None) => axum::Json(serde_json::json!({ "segment": null })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "activity current segment query failed");
-            axum::Json(serde_json::json!({ "segment": null })).into_response()
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
 }

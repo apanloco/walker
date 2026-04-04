@@ -14,7 +14,7 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 1. **XSS in `app.js`** — User-controlled strings (names, avatar URLs, emails) are interpolated directly into HTML via template literals and string concatenation. Add an `escapeHtml()` helper and apply it to all user-sourced values before HTML insertion.
 
-2. **Silent error swallowing across the server** — Pervasive `.unwrap_or(None)`, `.unwrap_or_default()`, and `.ok()?` patterns make "user doesn't exist" indistinguishable from "database is down." Switch DB lookups to `Result<Option<T>>` and propagate errors to callers.
+2. ~~**Silent error swallowing across the server**~~ — Fixed: DB errors now return 500 instead of empty data, `get_user()` returns `Result<Option<T>>`, frontend logs errors to console.
 
 3. ~~**Auth race conditions**~~ — Fixed by auth overhaul (localhost callback replaces device codes entirely).
 
@@ -502,9 +502,6 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 ## Future Features
 
 Roughly priority-ordered. Nothing here is committed — just ideas worth considering.
-
-### FTMS Device Support
-Generic FTMS (Fitness Machine Service) BLE profile. The `TreadmillProfile` trait already supports multiple devices — one new profile unlocks dozens of treadmill brands.
 
 ### Goals & Streaks on Leaderboard
 Daily/weekly calorie or distance targets. Streaks on the leaderboard (fire emoji next to names).

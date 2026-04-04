@@ -1,4 +1,4 @@
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use tracing::error;
 
 use super::db;
@@ -8,24 +8,39 @@ pub fn routes() -> Router<SharedLive> {
     Router::new().route("/api/leaderboard", get(get_leaderboard))
 }
 
-async fn get_leaderboard(State(ctx): State<SharedLive>) -> Json<serde_json::Value> {
+async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
-    let today = db::leaderboard_today(pool).await.unwrap_or_else(|e| {
-        error!(error = %e, "leaderboard_today query failed");
-        vec![]
-    });
-    let weekly = db::leaderboard_weekly(pool).await.unwrap_or_else(|e| {
-        error!(error = %e, "leaderboard_weekly query failed");
-        vec![]
-    });
-    let all_time = db::leaderboard_all_time(pool).await.unwrap_or_else(|e| {
-        error!(error = %e, "leaderboard_all_time query failed");
-        vec![]
-    });
+    let today = match db::leaderboard_today(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(error = %e, "leaderboard_today query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let weekly = match db::leaderboard_weekly(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(error = %e, "leaderboard_weekly query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let all_time = match db::leaderboard_all_time(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(error = %e, "leaderboard_all_time query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
 
     // Merge live status from open segments in DB.
-    let live_statuses = db::get_live_statuses(pool).await.unwrap_or_default();
+    let live_statuses = match db::get_live_statuses(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(error = %e, "get_live_statuses query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
 
     let enrich = |mut entries: Vec<db::LeaderboardEntry>| -> Vec<serde_json::Value> {
         entries
@@ -51,9 +66,10 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> Json<serde_json::Valu
             .collect()
     };
 
-    Json(serde_json::json!({
+    axum::Json(serde_json::json!({
         "today": enrich(today),
         "weekly": enrich(weekly),
         "all_time": enrich(all_time),
     }))
+    .into_response()
 }

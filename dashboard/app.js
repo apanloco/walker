@@ -123,14 +123,17 @@ if (loggedInId) {
   buildAvatarButton(null);
   // Fetch own profile to get avatar URL.
   fetch('/api/profile/' + encodeURIComponent(loggedInId))
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
     .then(p => {
       if (p.avatar_url) {
         loggedInAvatar = p.avatar_url;
         buildAvatarButton(p.avatar_url);
       }
     })
-    .catch(() => {});
+    .catch(e => console.error('Failed to fetch profile:', e));
 } else {
   navUser.innerHTML = '<a href="/login" class="text-sm text-walker-500 hover:text-walker-600 font-medium">Login</a>';
 }
@@ -184,14 +187,17 @@ function renderLeaderboard(elementId, entries) {
 
 function fetchLeaderboard() {
   fetch('/api/leaderboard')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
     .then(data => {
       renderLeaderboard('lb-today', data.today);
       renderLeaderboard('lb-weekly', data.weekly);
       renderLeaderboard('lb-alltime', data.all_time);
       if (window.twemoji) twemoji.parse(document.getElementById('page-leaderboard'));
     })
-    .catch(() => {});
+    .catch(e => console.error('Failed to fetch leaderboard:', e));
 }
 
 // -- Profile --
@@ -210,9 +216,12 @@ function fetchProfile() {
     return;
   }
   fetch('/api/profile/' + encodeURIComponent(currentProfileId))
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
     .then(renderProfile)
-    .catch(() => {});
+    .catch(e => console.error('Failed to fetch profile:', e));
 }
 
 function buildHeatmap(days) {
@@ -519,14 +528,17 @@ function fetchActivityClosed() {
   if (!currentActivityId) return;
   const dateParam = currentActivityDate ? '?date=' + encodeURIComponent(currentActivityDate) : '';
   fetch('/api/activity/' + encodeURIComponent(currentActivityId) + dateParam)
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
     .then(data => {
       renderClosedSegments(data.segments || []);
       // Re-render live segment — renderClosedSegments rebuilds the DOM
       // which destroys #activity-live-inner content.
       renderLiveSegment(lastLiveSegment);
     })
-    .catch(() => {});
+    .catch(e => console.error('Failed to fetch activity:', e));
 }
 
 function connectActivityWs() {
