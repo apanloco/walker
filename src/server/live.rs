@@ -139,8 +139,13 @@ async fn ws_live_user(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if db::get_user(&ctx.db_pool, caller).await.is_none() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    match db::get_user(&ctx.db_pool, caller).await {
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "get_user failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Ok(Some(_)) => {}
     }
 
     let Ok(user_id) = uuid::Uuid::parse_str(&id_str) else {

@@ -29,18 +29,20 @@ pub struct User {
     pub is_admin: bool,
 }
 
-/// Look up a user by ID. Returns None if not found.
-pub async fn get_user(pool: &PgPool, id: uuid::Uuid) -> Option<User> {
-    let row = sqlx::query("SELECT id, display_name, is_admin FROM users WHERE id = $1")
+/// Look up a user by ID. Returns Ok(None) if not found, Err on DB failure.
+pub async fn get_user(pool: &PgPool, id: uuid::Uuid) -> anyhow::Result<Option<User>> {
+    let Some(row) = sqlx::query("SELECT id, display_name, is_admin FROM users WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
-        .await
-        .ok()??;
-    Some(User {
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(User {
         id: row.get("id"),
         display_name: row.get("display_name"),
         is_admin: row.get("is_admin"),
-    })
+    }))
 }
 
 /// Upsert user and return their UUID in a single atomic query.

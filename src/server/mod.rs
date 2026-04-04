@@ -75,14 +75,17 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let pool = Arc::new(db::connect(config.database_url.as_ref().unwrap()).await?);
 
     // Close stale open segments from any previous crash (1 minute threshold).
-    let closed = db::close_stale_segments(&pool, 60.0)
-        .await
-        .unwrap_or_default();
-    if !closed.is_empty() {
-        info!(
-            "Closed {} stale open segment(s) from previous run",
-            closed.len()
-        );
+    match db::close_stale_segments(&pool, 60.0).await {
+        Ok(closed) if !closed.is_empty() => {
+            info!(
+                "Closed {} stale open segment(s) from previous run",
+                closed.len()
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to close stale segments on startup");
+        }
+        _ => {}
     }
 
     // Dev mode: seed dev user + history (but no auto-login — user must log in).

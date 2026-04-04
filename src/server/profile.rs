@@ -49,25 +49,34 @@ async fn get_profile(
     let Some(caller) = super::cookie_user_id(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let Some(caller) = db::get_user(pool, caller).await else {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let caller = match db::get_user(pool, caller).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "get_user failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
         return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
-    let user = sqlx::query(
+    let user = match sqlx::query(
         "SELECT display_name, avatar_url, weight_kg, email, created_at::TEXT FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool.as_ref())
     .await
-    .ok()
-    .flatten();
-
-    let Some(user) = user else {
-        return axum::Json(serde_json::json!({"error": "user not found"})).into_response();
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return axum::Json(serde_json::json!({"error": "user not found"})).into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "profile user query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
 
     let name: String = sqlx::Row::get(&user, "display_name");
@@ -78,20 +87,29 @@ async fn get_profile(
     let id_str = id.to_string();
 
     // Full year for heatmap + 30 days for stats.
-    let year_history = db::user_history(pool, id, 365).await.unwrap_or_else(|e| {
-        tracing::error!(error = %e, "user_history query failed");
-        vec![]
-    });
-    let streak = db::user_streak(pool, id).await.unwrap_or_else(|e| {
-        tracing::error!(error = %e, "user_streak query failed");
-        0
-    });
+    let year_history = match db::user_history(pool, id, 365).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "user_history query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let streak = match db::user_streak(pool, id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "user_streak query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
 
     // All-time totals (could be longer than 365 days).
-    let all_time = db::user_history(pool, id, 99999).await.unwrap_or_else(|e| {
-        tracing::error!(error = %e, "user_history all_time query failed");
-        vec![]
-    });
+    let all_time = match db::user_history(pool, id, 99999).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "user_history all_time query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let total_calories: f64 = all_time.iter().map(|d| d.calories_kcal).sum();
     let total_active_calories: f64 = all_time.iter().map(|d| d.active_calories_kcal).sum();
     let total_distance: f64 = all_time.iter().map(|d| d.distance_km).sum();
