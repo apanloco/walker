@@ -22,6 +22,8 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 5. ~~**Device code memory leak**~~ — Fixed by auth overhaul (no more in-memory device codes — no device codes at all).
 
+6. ~~**Timezone mismatch: JS used local dates, server uses UTC**~~ — Fixed: all JavaScript date computations now use UTC (`getUTCFullYear`, `getUTCMonth`, `getUTCDate`) to match server's `CURRENT_DATE` (UTC). "Today" consistently means UTC today everywhere.
+
 ## License
 
 MIT. Use super permissive licenses for all code and dependencies where possible.
@@ -208,6 +210,12 @@ Source: [Compendium of Physical Activities — Walking](https://pacompendium.com
 ### Weight
 
 Default 70.0 kg. Stored on each segment at creation time so historical calories remain accurate if weight changes. The Activity page shows weight per segment, making users aware it affects their numbers.
+
+### Timezone
+
+UTC everywhere. All timestamps are stored as `TIMESTAMPTZ` (UTC internally). All date boundaries — "today", "this week", heatmap cells — use UTC. The dashboard JavaScript uses `getUTC*()` methods to match the server's `CURRENT_DATE`.
+
+This means for users east of UTC, there's a window after local midnight where "today" on the dashboard still shows the previous UTC day. This is an accepted tradeoff for simplicity — no per-user timezone config, no timezone threading through queries, and the client and server always agree on what "today" means.
 
 ### Timeouts & Intervals
 

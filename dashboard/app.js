@@ -42,7 +42,7 @@ function initPage() {
     currentActivityDate = new URLSearchParams(location.search).get('date');
     // Treat today's date the same as no date (enables live WebSocket).
     const today = new Date();
-    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const todayStr = today.getUTCFullYear() + '-' + String(today.getUTCMonth() + 1).padStart(2, '0') + '-' + String(today.getUTCDate()).padStart(2, '0');
     if (currentActivityDate === todayStr) currentActivityDate = null;
     // Update heading.
     const heading = document.getElementById('activity-heading');
@@ -238,27 +238,28 @@ function buildHeatmap(days) {
   const goldThresholdKm = 8.0; // ~10,000 steps — research-backed daily goal.
 
   // Generate exactly 53 weeks of dates ending this week.
+  // Use UTC dates to match server's CURRENT_DATE (UTC).
   const today = new Date();
   const cells = [];
 
   // Start 53 weeks ago, aligned to Monday.
-  const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dayOfWeek = startDate.getDay();
+  const startDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const dayOfWeek = startDate.getUTCDay();
   const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 0 offset
-  startDate.setDate(startDate.getDate() - (52 * 7) - mondayOffset);
+  startDate.setUTCDate(startDate.getUTCDate() - (52 * 7) - mondayOffset);
 
   const months = [];
   let lastMonth = -1;
 
   // Generate all days from startDate to end of this week.
-  const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   // End today — no future days.
 
   const d = new Date(startDate);
   while (d <= endDate) {
-    const dateStr = d.getFullYear() + '-' +
-      String(d.getMonth() + 1).padStart(2, '0') + '-' +
-      String(d.getDate()).padStart(2, '0');
+    const dateStr = d.getUTCFullYear() + '-' +
+      String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getUTCDate()).padStart(2, '0');
     const data = dataMap[dateStr];
     const cal = data ? data.active_calories_kcal : 0;
 
@@ -271,9 +272,9 @@ function buildHeatmap(days) {
       else level = 1;
     }
 
-    const month = d.getMonth();
+    const month = d.getUTCMonth();
     if (month !== lastMonth) {
-      months.push({ week: Math.floor(cells.length / 7), name: d.toLocaleString('default', { month: 'short' }) });
+      months.push({ week: Math.floor(cells.length / 7), name: d.toLocaleString('default', { month: 'short', timeZone: 'UTC' }) });
       lastMonth = month;
     }
 
@@ -283,9 +284,9 @@ function buildHeatmap(days) {
 
     const isGold = data && data.distance_km >= goldThresholdKm;
     const color = isGold ? goldColor : colors[level];
-    cells.push({ dateStr, level, color, tooltip, day: d.getDay() });
+    cells.push({ dateStr, level, color, tooltip, day: d.getUTCDay() });
 
-    d.setDate(d.getDate() + 1);
+    d.setUTCDate(d.getUTCDate() + 1);
   }
 
   // Build grid: 7 rows (days) × ~53 columns (weeks).
