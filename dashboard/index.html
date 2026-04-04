@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+// Apply theme before render to prevent flash
+(function() {
+  var m = document.cookie.match(/(?:^|; )walker_theme=([^;]*)/);
+  document.documentElement.classList.add('theme-' + (m ? decodeURIComponent(m[1]) : 'gruvbox'));
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Walker</title>
@@ -11,70 +18,177 @@ tailwind.config = {
   theme: {
     extend: {
       colors: {
-        walker: { 50: '#f0fdf4', 100: '#dcfce7', 500: '#22c55e', 600: '#16a34a', 700: '#15803d' },
-        surface: { 800: '#1a1d27', 900: '#13151d', 950: '#0f1117' }
+        gray: {
+          50: 'rgb(var(--gray-50) / <alpha-value>)',
+          100: 'rgb(var(--gray-100) / <alpha-value>)',
+          200: 'rgb(var(--gray-200) / <alpha-value>)',
+          300: 'rgb(var(--gray-300) / <alpha-value>)',
+          400: 'rgb(var(--gray-400) / <alpha-value>)',
+          500: 'rgb(var(--gray-500) / <alpha-value>)',
+          600: 'rgb(var(--gray-600) / <alpha-value>)',
+          700: 'rgb(var(--gray-700) / <alpha-value>)',
+          800: 'rgb(var(--gray-800) / <alpha-value>)',
+          900: 'rgb(var(--gray-900) / <alpha-value>)',
+          950: 'rgb(var(--gray-950) / <alpha-value>)',
+        },
+        walker: {
+          50: 'rgb(var(--walker-50) / <alpha-value>)',
+          100: 'rgb(var(--walker-100) / <alpha-value>)',
+          500: 'rgb(var(--walker-500) / <alpha-value>)',
+          600: 'rgb(var(--walker-600) / <alpha-value>)',
+          700: 'rgb(var(--walker-700) / <alpha-value>)',
+        },
+        surface: {
+          800: 'rgb(var(--surface-800) / <alpha-value>)',
+          900: 'rgb(var(--surface-900) / <alpha-value>)',
+          950: 'rgb(var(--surface-950) / <alpha-value>)',
+        },
+        heat: {
+          0: 'rgb(var(--heat-0) / <alpha-value>)',
+          1: 'rgb(var(--heat-1) / <alpha-value>)',
+          2: 'rgb(var(--heat-2) / <alpha-value>)',
+          3: 'rgb(var(--heat-3) / <alpha-value>)',
+          4: 'rgb(var(--heat-4) / <alpha-value>)',
+          gold: 'rgb(var(--heat-gold) / <alpha-value>)',
+        },
+        status: {
+          walking: 'rgb(var(--status-walking) / <alpha-value>)',
+          idle: 'rgb(var(--status-idle) / <alpha-value>)',
+        }
       }
     }
   }
 }
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body { font-family: 'Inter', system-ui, sans-serif; }
+/* ===== Theme: C64 ===== */
+.theme-c64 {
+  --surface-950: 13 13 26; --surface-900: 17 15 37; --surface-800: 23 21 48;
+  --gray-50: 160 160 224; --gray-100: 160 160 224; --gray-200: 160 160 224;
+  --gray-300: 160 160 224; --gray-400: 160 160 224; --gray-500: 160 160 224;
+  --gray-600: 160 160 224; --gray-700: 50 45 80; --gray-800: 32 28 58;
+  --gray-900: 20 18 48; --gray-950: 10 9 24;
+  --walker-50: 180 180 235; --walker-100: 170 170 230;
+  --walker-500: 160 160 224; --walker-600: 180 180 235; --walker-700: 140 140 200;
+  --heat-0: 45 41 80; --heat-1: 40 38 120; --heat-2: 60 57 160;
+  --heat-3: 112 109 235; --heat-4: 160 158 245; --heat-gold: 237 241 113;
+  --status-walking: 160 160 224; --status-idle: 237 241 113;
+  font-family: 'Pixelify Sans', monospace;
+}
+
+/* ===== Theme: Material ===== */
+.theme-material {
+  --surface-950: 20 18 24; --surface-900: 33 31 38; --surface-800: 43 41 50;
+  --gray-50: 230 225 229; --gray-100: 202 196 208; --gray-200: 180 174 186;
+  --gray-300: 155 149 161; --gray-400: 147 143 153; --gray-500: 120 114 126;
+  --gray-600: 90 84 96; --gray-700: 73 69 79; --gray-800: 54 52 60;
+  --gray-900: 33 31 38; --gray-950: 20 18 24;
+  --walker-50: 245 240 255; --walker-100: 230 220 255;
+  --walker-500: 208 188 255; --walker-600: 180 160 230; --walker-700: 150 130 200;
+  --heat-0: 73 69 79; --heat-1: 79 55 139; --heat-2: 130 100 190;
+  --heat-3: 208 188 255; --heat-4: 230 220 255; --heat-gold: 255 180 50;
+  --status-walking: 130 219 140; --status-idle: 255 183 77;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* ===== Theme: Gruvbox ===== */
+.theme-gruvbox {
+  --surface-950: 29 32 33; --surface-900: 40 40 40; --surface-800: 60 56 54;
+  --gray-50: 251 241 199; --gray-100: 235 219 178; --gray-200: 213 196 161;
+  --gray-300: 189 174 147; --gray-400: 168 153 132; --gray-500: 124 111 100;
+  --gray-600: 102 92 84; --gray-700: 80 73 69; --gray-800: 60 56 54;
+  --gray-900: 40 40 40; --gray-950: 29 32 33;
+  --walker-50: 255 230 200; --walker-100: 255 200 160;
+  --walker-500: 254 128 25; --walker-600: 214 93 14; --walker-700: 175 58 3;
+  --heat-0: 80 73 69; --heat-1: 175 58 3; --heat-2: 214 93 14;
+  --heat-3: 254 128 25; --heat-4: 250 189 47; --heat-gold: 251 73 52;
+  --status-walking: 184 187 38; --status-idle: 250 189 47;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* ===== C64-Specific ===== */
+.theme-c64 *, .theme-c64 *::before, .theme-c64 *::after { border-radius: 0 !important; }
+.theme-c64 .theme-panel { border: 2px solid rgb(var(--gray-700)); box-shadow: 4px 4px 0 rgb(var(--gray-950)); }
+.theme-c64 { font-size: 18px; --hm-label-w: 36px; --bar-day-w: 40px; --bar-kcal-w: 140px; }
+.theme-c64 .logo-text { font-size: 18px !important; letter-spacing: 0.1em; text-transform: uppercase; }
+.theme-c64 .text-white { color: rgb(160 160 224) !important; }
+.theme-c64::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+}
+
+/* ===== Material-Specific ===== */
+.theme-material .theme-panel { border-radius: 12px !important; border: 1px solid transparent; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+
+/* ===== Gruvbox-Specific ===== */
+.theme-gruvbox .theme-panel { border-radius: 8px !important; border: 1px solid rgb(var(--gray-700)); }
+
+/* ===== Shared ===== */
 img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em; margin: 0 1px; }
+
+.nav-tab {
+  display: flex; align-items: center; height: 100%;
+  padding: 0 16px; cursor: pointer;
+  text-transform: uppercase; color: rgb(var(--gray-500));
+  border-bottom: 2px solid transparent; transition: all 0.2s;
+}
+.nav-tab:hover { color: rgb(var(--gray-300)); }
+.nav-tab.active { color: rgb(var(--walker-500)); border-bottom-color: rgb(var(--walker-500)); }
+
+.theme-c64 .nav-tab { font-size: 14px; letter-spacing: 0.1em; border-bottom-width: 3px; }
+.theme-material .nav-tab, .theme-gruvbox .nav-tab { font-size: 13px; font-weight: 600; letter-spacing: 0.05em; }
+
+.segment-row {
+  display: grid;
+  grid-template-columns: 16px 120px 120px 90px 140px 80px 72px 56px;
+  align-items: center;
+  gap: 0 14px;
+}
+.theme-c64 .segment-row {
+  grid-template-columns: 16px 150px 140px 100px 200px 100px 90px 65px;
+  gap: 0 16px;
+}
+
+/* ===== Animations ===== */
+@keyframes pixel-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes smooth-pulse { 50% { opacity: 0.5; } }
+.theme-c64 .live-blink { animation: pixel-blink 1s steps(1) infinite; }
+.theme-material .live-blink { animation: smooth-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.theme-gruvbox .live-blink { animation: smooth-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 </style>
 </head>
 <body class="bg-surface-950 text-gray-200 min-h-screen">
 
 <!-- Nav -->
-<nav class="bg-surface-900 border-b border-gray-800 px-6 flex items-center justify-between h-12">
+<nav class="bg-surface-900 border-b border-gray-700 px-6 flex items-center justify-between h-14">
   <div class="flex items-center gap-1 h-full">
-    <!-- Logo -->
-    <a href="/" class="flex items-center gap-2 mr-5 group">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" class="text-walker-500">
+    <a href="/" class="flex items-center gap-2 mr-5 group text-walker-500 hover:text-walker-600 transition-colors">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="4.5" r="2.5" fill="currentColor"/>
         <path d="M15.5 9.5C14.5 8.5 13.3 8 12 8C10.7 8 9.5 8.5 8.5 9.5L6 12L7.4 13.4L9.5 11.3V22H11.5V17H12.5V22H14.5V11.3L16.6 13.4L18 12L15.5 9.5Z" fill="currentColor"/>
       </svg>
-      <span class="text-walker-500 font-bold text-base group-hover:text-walker-600 transition-colors">Walker</span>
+      <span class="logo-text font-bold text-base">Walker</span>
     </a>
-    <!-- Tabs -->
     <a id="tab-leaderboard" href="/" class="nav-tab">Leaderboard</a>
     <a id="tab-activity" href="/activity" class="nav-tab" style="display:none">Activity</a>
   </div>
-  <!-- Right: avatar or login -->
   <div id="nav-user" class="flex items-center"></div>
 </nav>
-
-<style>
-  .nav-tab {
-    display: flex; align-items: center; height: 100%;
-    padding: 0 16px; cursor: pointer; font-size: 13px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.05em; color: #666;
-    border-bottom: 2px solid transparent; transition: all 0.2s;
-  }
-  .nav-tab:hover { color: #aaa; }
-  .nav-tab.active { color: #22c55e; border-bottom-color: #22c55e; }
-  .segment-row {
-    display: grid;
-    grid-template-columns: 16px 100px 100px 80px 120px 72px 64px 48px;
-    align-items: center;
-    gap: 0 12px;
-  }
-</style>
 
 <!-- Leaderboard page -->
 <div id="page-leaderboard" class="page px-6 pb-8 hidden">
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-    <div class="bg-surface-800 rounded-xl p-5">
+    <div class="bg-surface-800 rounded-xl border border-gray-800 theme-panel p-5">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Today</h3>
       <div id="lb-today" class="space-y-1"><div class="text-gray-600 text-sm italic">No data yet</div></div>
     </div>
-    <div class="bg-surface-800 rounded-xl p-5">
+    <div class="bg-surface-800 rounded-xl border border-gray-800 theme-panel p-5">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">This Week</h3>
       <div id="lb-weekly" class="space-y-1"><div class="text-gray-600 text-sm italic">No data yet</div></div>
     </div>
-    <div class="bg-surface-800 rounded-xl p-5">
+    <div class="bg-surface-800 rounded-xl border border-gray-800 theme-panel p-5">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">All Time</h3>
       <div id="lb-alltime" class="space-y-1"><div class="text-gray-600 text-sm italic">No data yet</div></div>
     </div>
@@ -92,6 +206,9 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
   <div id="activity-live" class="mb-2"></div>
   <div id="activity-closed"></div>
 </div>
+
+<!-- Tailwind: ensure dynamic classes from app.js are generated -->
+<div class="hidden bg-heat-0 bg-heat-1 bg-heat-2 bg-heat-3 bg-heat-4 bg-heat-gold bg-status-walking text-status-walking bg-status-idle text-status-idle hover:ring-1 hover:ring-walker-500"></div>
 
 <script src="/app.js"></script>
 </body>

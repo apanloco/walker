@@ -60,8 +60,8 @@ src/
     leaderboard.rs — GET /api/leaderboard with live status merge
     profile.rs     — GET /api/profile/{id} with year history, records, periods
 dashboard/
-  index.html       — Tailwind CSS + Inter font + Twemoji, nav, leaderboard, profile, activity pages
-  app.js           — leaderboard, profile with heatmap, activity timeline, WebSocket
+  index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, activity pages
+  app.js           — leaderboard, profile with heatmap, activity timeline, WebSocket, theme switcher
 migrations/
   001_initial.sql  — users, tokens, segments tables
 deny.toml          — cargo-deny license/advisory config
@@ -268,24 +268,46 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - **Production:** embedded via `include_str!` (single binary)
 - **Dev mode (`--dev`):** served from disk (edit, save, refresh — no rebuild)
 
-**Tech stack:** Tailwind CSS (CDN), Inter font (Google Fonts), Twemoji (consistent emoji rendering)
+**Tech stack:** Tailwind CSS (CDN), Twemoji (consistent emoji rendering), Google Fonts (Pixelify Sans, Inter)
 
-**Navigation:** Logo + tabs (Leaderboard, Activity) on the left. Avatar dropdown on the right (Profile, Settings, Logout). Activity tab only visible when logged in. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
+**Theming:** Three themes selectable via avatar dropdown menu. Choice persisted in `walker_theme` cookie (1 year, client-side only, no database). Default: Gruvbox.
+
+All colors defined as CSS custom properties (space-separated RGB triplets) on theme classes (`theme-gruvbox`, `theme-c64`, `theme-material`) applied to `<html>`. Tailwind config references these via `rgb(var(--color) / <alpha-value>)` format, enabling opacity modifiers. Theme detection runs in `<head>` before render to prevent flash.
+
+Color categories:
+- `surface` (800, 900, 950) — backgrounds
+- `gray` (50–950) — text hierarchy
+- `walker` (50, 100, 500, 600, 700) — accent color
+- `heat` (0–4, gold) — heatmap intensity levels
+- `status` (walking, idle) — live status indicators
+
+Sizing that varies by theme uses CSS variables with defaults: `--hm-label-w` (heatmap day label width), `--bar-day-w` / `--bar-kcal-w` (weekly bar column widths).
+
+| Theme | Accent | Font | Extras |
+|-------|--------|------|--------|
+| Gruvbox (default) | Bright orange `#fe8019` | Inter | Warm charcoal surfaces, cream text |
+| C64 | Light blue `#A0A0E0` | Pixelify Sans | No border-radius, scanline overlay, pixel-blink animation, two-color text |
+| Material | Purple `#D0BCFF` | Inter | M3 dark palette, elevation shadows, smooth-pulse animation |
+
+Theme-specific CSS handles: font-family, border-radius overrides, animations (pixel-blink vs smooth-pulse), panel styles, scanline overlay (C64 only), font-size scaling (C64 uses 18px root).
+
+**Page code (`app.js`) is theme-unaware.** It uses semantic Tailwind classes (`bg-walker-500`, `bg-heat-3`, `bg-status-walking`) that resolve to different colors per theme via CSS variables. No theme conditionals in page rendering code.
+
+**Navigation:** Logo + tabs (Leaderboard, Activity) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). Activity tab only visible when logged in. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
 
 **Leaderboard tab** (default, public — no login required):
 - Today / This Week / All Time top 10
-- Live status indicators (pulsing green dot for walking, yellow for idle)
+- Live status indicators (themed walking/idle dots with theme-appropriate animation)
 - Clickable names → profile page (redirects to leaderboard if not logged in)
 - Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications
 
 **Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
+- Last 7 days: horizontal bar chart with live indicator (blinking dot next to today when walking/idle). Bars show "active kcal" label. Refetched on `/ws/live` notifications so bars update live while walking.
+- GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → activity page for that date
 - Stats grid: total kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
-- GitHub-style daily heatmap: full year, green intensity + gold for 8+ km days, clickable cells → activity page for that date
-- Last 7 days: horizontal bar chart
-- Fetched on page load only (summary data, not live)
 
 **Activity page** (login required):
 - Segments for a given date, grouped into sessions (gap > 60 min = separate session)
