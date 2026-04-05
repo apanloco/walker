@@ -24,6 +24,10 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 6. ~~**Timezone mismatch: JS used local dates, server uses UTC**~~ — Fixed: all JavaScript date computations now use UTC (`getUTCFullYear`, `getUTCMonth`, `getUTCDate`) to match server's `CURRENT_DATE` (UTC). "Today" consistently means UTC today everywhere.
 
+7. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
+
+8. ~~**Landing/onboarding page**~~ — Done: README.md written with quick start, supported devices, CLI commands, architecture overview. Login page updated with tagline and GitHub link. Leaderboard remains the logged-in default.
+
 ## License
 
 MIT. Use super permissive licenses for all code and dependencies where possible.
@@ -378,7 +382,7 @@ Design: **steps detect, speed measures, server computes.**
 
 ### Login Page (`/login`)
 
-Server-rendered page at `/login`. Shows buttons for each configured provider. In dev mode, also shows a "Dev Login" button. The same page handles both flows:
+Server-rendered page at `/login`. Shows tagline, buttons for each configured provider, and a GitHub link for onboarding. In dev mode, also shows a "Dev Login" button. The same page handles both flows:
 
 - **Dashboard (web) login:** user navigates to `/login` (or is redirected there). No `cli_port` param. After OAuth, sets `walker_id` cookie and redirects to `/`.
 - **CLI login:** user runs `walker login`, CLI starts a local HTTP server on a random port, opens browser to `/login?cli_port=P`. After OAuth, server redirects browser to `http://localhost:P/callback?token=...&email=...&name=...`. CLI receives it, saves credentials, done.
