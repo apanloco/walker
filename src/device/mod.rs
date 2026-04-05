@@ -66,56 +66,42 @@ pub enum TreadmillEvent {
 
 // -- Step tracking --
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StepChange {
+    Baseline,  // first reading after reset, no comparison yet
+    Changed,   // raw value differs from previous
+    Unchanged, // same as previous
+}
+
 pub struct StepTracker {
     prev_raw: Option<u16>,
-    pub total: u64,
-    pub wrap_count: u32,
 }
 
 impl StepTracker {
     pub fn new() -> Self {
-        Self {
-            prev_raw: None,
-            total: 0,
-            wrap_count: 0,
-        }
+        Self { prev_raw: None }
     }
 
     /// Call on reconnect — clears the previous raw value so the next reading
-    /// becomes a new baseline without triggering a false wrap.
+    /// becomes a new baseline.
     pub fn reset(&mut self) {
         self.prev_raw = None;
     }
 
-    /// Feed a new raw step value. Returns None when establishing baseline
-    /// (first reading after reset), Some(total) when real step data is available.
-    pub fn update(&mut self, raw_steps: u16) -> Option<u64> {
+    /// Feed a new raw step value. Returns whether it changed from the last reading.
+    pub fn update(&mut self, raw_steps: u16) -> StepChange {
         match self.prev_raw {
-            Some(prev) if raw_steps < prev => {
-                // Wrap detected.
-                let wrap_at = 10000u64;
-                self.total += wrap_at - prev as u64 + raw_steps as u64;
-                self.wrap_count += 1;
-                tracing::warn!(
-                    prev_raw = prev,
-                    new_raw = raw_steps,
-                    wrap_count = self.wrap_count,
-                    total_steps = self.total,
-                    "Step counter wrapped!"
-                );
-                self.prev_raw = Some(raw_steps);
-                Some(self.total)
-            }
             Some(prev) => {
-                self.total += (raw_steps - prev) as u64;
                 self.prev_raw = Some(raw_steps);
-                Some(self.total)
+                if raw_steps != prev {
+                    StepChange::Changed
+                } else {
+                    StepChange::Unchanged
+                }
             }
             None => {
-                // First reading after reset — set baseline, no real data yet.
-                self.total = raw_steps as u64;
                 self.prev_raw = Some(raw_steps);
-                None
+                StepChange::Baseline
             }
         }
     }
