@@ -175,7 +175,7 @@ function renderLeaderboard(elementId, entries) {
     return;
   }
   el.innerHTML = entries.map((e, i) => `
-    <div class="flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
+    <div class="relative group flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
       <div class="w-6 text-right text-sm">${rankBadge(i)}</div>
       ${e.avatar_url
         ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700" src="' + e.avatar_url + '" alt="">'
@@ -185,10 +185,10 @@ function renderLeaderboard(elementId, entries) {
         <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${e.name}</a>
         <div class="flex items-center gap-1 mt-0.5">${statusIndicator(e)}</div>
       </div>
-      <div class="text-right">
-        <div class="text-lg font-bold text-white">${e.active_calories_kcal.toFixed(1)}</div>
-        <div class="text-[10px] text-gray-500 -mt-0.5">active kcal</div>
-        <div class="text-[10px] text-gray-600 -mt-0.5">${e.calories_kcal.toFixed(1)} total</div>
+      <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
+      <div class="absolute right-0 top-full hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">
+        <div>${e.active_calories_kcal.toFixed(1)} active kcal</div>
+        <div class="mt-1">${e.calories_kcal.toFixed(1)} total kcal</div>
       </div>
     </div>
   `).join('');
