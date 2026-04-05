@@ -308,13 +308,19 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
 
     loop {
         let (device, profile) = loop {
-            if let Some(found) = ble::find_treadmill(&adapter, timeout, &registry).await? {
-                break found;
+            match ble::find_treadmill(&adapter, timeout, &registry).await {
+                Ok(Some(found)) => break found,
+                Ok(None) => {
+                    info!("{}", "No walking machine found yet. Retrying...".yellow());
+                }
+                Err(e) => {
+                    error!(error = %e, "BLE scan failed, retrying in 3 seconds...");
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
             }
-            info!("{}", "No walking machine found yet. Retrying...".yellow());
         };
 
-        let props = device.properties().await?.unwrap_or_default();
+        let props = device.properties().await.ok().flatten().unwrap_or_default();
         let name = props.local_name.as_deref().unwrap_or("Unknown");
         let address = props.address;
         info!(
@@ -331,31 +337,45 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
         }
         info!("Connected!");
 
-        device.discover_services().await?;
-        let services = device.services();
-        info!("Discovered {} service(s)", services.len());
+        // Set up the connection: discover services, subscribe, activate.
+        // If any step fails, disconnect and retry from scanning.
+        let stream: anyhow::Result<_> = async {
+            device.discover_services().await?;
+            let services = device.services();
+            info!("Discovered {} service(s)", services.len());
 
-        for service in &services {
-            let chars: Vec<String> = service
-                .characteristics
-                .iter()
-                .map(|c| {
-                    let short = display::char_short_name(&c.uuid);
-                    format!("    {} [{:?}] ({short})", c.uuid, c.properties)
-                })
-                .collect();
-            info!(uuid = %service.uuid, "\n{}", chars.join("\n"));
+            for service in &services {
+                let chars: Vec<String> = service
+                    .characteristics
+                    .iter()
+                    .map(|c| {
+                        let short = display::char_short_name(&c.uuid);
+                        format!("    {} [{:?}] ({short})", c.uuid, c.properties)
+                    })
+                    .collect();
+                info!(uuid = %service.uuid, "\n{}", chars.join("\n"));
+            }
+
+            ble::subscribe_notify(&device, profile.notify_uuids()).await?;
+            profile.activate(&device).await?;
+            Ok(device.notifications().await?)
         }
+        .await;
 
-        ble::subscribe_notify(&device, profile.notify_uuids()).await?;
-        profile.activate(&device).await?;
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                error!(error = %e, "Connection setup failed, retrying in 3 seconds...");
+                let _ = device.disconnect().await;
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                continue;
+            }
+        };
 
         info!("{}", "Listening for data — press Ctrl+C to stop".green());
         if lines_since_header == 0 {
             println!();
         }
-
-        let mut stream = device.notifications().await?;
 
         loop {
             let notification =
