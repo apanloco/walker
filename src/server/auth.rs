@@ -103,7 +103,9 @@ async fn login_page(
 <html>
 <head><title>Walker - Login</title>
 <style>
-  body {{ font-family: system-ui; max-width: 400px; margin: 80px auto; text-align: center; }}
+  body {{ font-family: system-ui; max-width: 440px; margin: 60px auto; text-align: center; color: #e0e0e0; background: #1a1a1a; }}
+  h1 {{ font-size: 2.5em; margin-bottom: 0.2em; }}
+  .tagline {{ color: #999; font-size: 0.95em; margin-bottom: 2em; }}
   .buttons {{ margin-top: 24px; display: flex; flex-direction: column; gap: 12px; align-items: center; }}
   a.btn {{ display: inline-block; padding: 12px 24px; width: 220px;
            color: white; text-decoration: none; border-radius: 6px; font-size: 16px; }}
@@ -113,13 +115,18 @@ async fn login_page(
   a.btn.google:hover {{ background: #3367d6; }}
   a.btn.dev {{ background: #059669; }}
   a.btn.dev:hover {{ background: #047857; }}
+  .footer {{ margin-top: 3em; font-size: 0.85em; color: #666; }}
+  .footer a {{ color: #888; }}
 </style>
 </head>
 <body>
   <h1>Walker</h1>
-  <p>Sign in to continue</p>
+  <p class="tagline">Real-time treadmill tracking with honest calories.<br>Connect, walk, compete.</p>
   <div class="buttons">
     {buttons}
+  </div>
+  <div class="footer">
+    <a href="https://github.com/apanloco/walker">GitHub</a> &middot; How to get started, supported devices, and more.
   </div>
 </body>
 </html>"#
