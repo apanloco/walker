@@ -14,25 +14,7 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 ## TODO
 
-1. ~~**XSS in `app.js`**~~ — Fixed: `esc()` helper escapes all user-controlled strings (names, avatar URLs, emails) before HTML insertion. Raw data stored in DB, escaped on render.
-
-2. ~~**Silent error swallowing across the server**~~ — Fixed: DB errors now return 500 instead of empty data, `get_user()` returns `Result<Option<T>>`, frontend logs errors to console.
-
-3. ~~**Auth race conditions**~~ — Fixed by auth overhaul (localhost callback replaces device codes entirely).
-
-4. ~~**Reporter has no retry or feedback**~~ — Not needed: every heartbeat (1s) sends the full current state idempotently. A lost update self-heals on the next successful heartbeat. Server disconnect checker (30s) handles total loss.
-
-5. ~~**Device code memory leak**~~ — Fixed by auth overhaul (no more in-memory device codes — no device codes at all).
-
-6. ~~**Timezone mismatch: JS used local dates, server uses UTC**~~ — Fixed: all JavaScript date computations now use UTC (`getUTCFullYear`, `getUTCMonth`, `getUTCDate`) to match server's `CURRENT_DATE` (UTC). "Today" consistently means UTC today everywhere.
-
-7. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
-
-8. ~~**Landing/onboarding page**~~ — Done: README.md written with quick start, supported devices, CLI commands, architecture overview. Login page updated with tagline and GitHub link. Leaderboard remains the logged-in default.
-
-9. **BLE device control: speed increase/decrease** — Support writing to the treadmill to change speed from the command line during `walker walk`. Requires reverse-engineering the write commands for each device profile.
-
-10. ~~**Simplify step tracking and CLI display**~~ — Done: `StepTracker` now returns a `StepChange` enum (`Baseline`/`Changed`/`Unchanged`) instead of maintaining a running total with wraparound math. `ActivityTracker` matches on the enum directly. CLI display shows raw treadmill step value instead of computed total.
+1. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
 
 ## License
 
@@ -542,6 +524,14 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 ## Future Features
 
 Roughly priority-ordered. Nothing here is committed — just ideas worth considering.
+
+### Web BLE: Walk from the Browser
+Connect to a treadmill directly from the browser using the Web Bluetooth API, no CLI needed. A dedicated `/walk` page opens in a separate tab, handles BLE scanning/connection, protocol parsing, activity detection, and POSTs updates to the server. The user browses the dashboard normally in other tabs.
+
+**Requirements:** Chromium-only (no Firefox/Safari). HTTPS or localhost. User gesture required to trigger BLE scan. Requires reimplementing UREVO protocol parsing and StepChange/ActivityTracker state machine in JavaScript (duplication with Rust client). Tab must stay open — browser may throttle/disconnect BLE if the tab is backgrounded too long. Best as a "quick start" option alongside the CLI, not a full replacement.
+
+### BLE Device Control: Speed from CLI
+Write commands to the treadmill to increase/decrease speed from the command line during `walker walk`. Requires reverse-engineering the write commands for each device profile.
 
 ### Goals & Streaks on Leaderboard
 Daily/weekly calorie or distance targets. Streaks on the leaderboard (fire emoji next to names).
