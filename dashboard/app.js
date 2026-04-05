@@ -353,7 +353,9 @@ function buildHeatmap(days) {
       const nearLeft = col < 6;
       const posX = nearRight ? 'right-0' : nearLeft ? 'left-0' : 'left-1/2 -translate-x-1/2';
 
-      const isClickable = data && data.active_calories_kcal > 0 && currentProfileId;
+      const hasActivity = data && data.active_calories_kcal > 0;
+      const isDev = document.cookie.split(';').some(c => c.trim() === 'walker_dev=1');
+      const isClickable = currentProfileId && (hasActivity || isDev);
       const tag = isClickable ? 'a' : 'div';
       const href = isClickable ? ' href="/activity/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
       html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
@@ -607,11 +609,6 @@ function renderClosedSegments(segments) {
   const el = document.getElementById('activity-closed');
   if (!el) return;
 
-  if (segments.length === 0) {
-    el.innerHTML = '';
-    return;
-  }
-
   // Group segments into sessions (gap > 60 min = separate session).
   const sessions = [];
   let currentSession = [];
@@ -635,32 +632,47 @@ function renderClosedSegments(segments) {
   sessions.reverse();
   sessions.forEach(s => s.reverse());
 
+  const isToday = !currentActivityDate;
+
+  // Always create at least one session panel so there's a visible day-card.
+  // For today, this also gives the live segment a home.
+  if (sessions.length === 0) {
+    sessions.push([]);
+  }
+
   let html = '';
 
   sessions.forEach((session, si) => {
     if (si > 0) html += '<div class="my-6"></div>';
 
+    const isEmpty = session.length === 0;
+
     // Segments are reversed (newest first), so last element is earliest.
-    const sessionStart = new Date(session[session.length - 1].started_at);
-    const firstSeg = session[0];
-    const sessionEnd = new Date(new Date(firstSeg.started_at).getTime() + firstSeg.duration_s * 1000);
+    const sessionStart = isEmpty ? null : new Date(session[session.length - 1].started_at);
+    const sessionEnd = isEmpty ? null : new Date(new Date(session[0].started_at).getTime() + session[0].duration_s * 1000);
     const totalCal = session.filter(s => s.moving).reduce((sum, s) => sum + s.active_calories_kcal, 0);
     const totalDist = session.filter(s => s.moving).reduce((sum, s) => sum + s.distance_m, 0);
     const totalDur = session.filter(s => s.moving).reduce((sum, s) => sum + s.duration_s, 0);
 
     html += '<div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-4">';
-    html += '<div class="flex items-center justify-between mb-4">';
-    html += '<div class="text-sm text-gray-400">' + formatDate(sessionStart) + ' · ' + formatTime(sessionStart) + ' – <span id="session-end-' + si + '">' + formatTime(sessionEnd) + '</span></div>';
-    html += '<div id="session-stats-' + si + '" class="text-sm text-gray-500">' + totalCal.toFixed(1) + ' kcal · ' + (totalDist / 1000).toFixed(2) + ' km · ' + formatDurationLong(totalDur) + '</div>';
-    html += '</div>';
+    if (!isEmpty) {
+      html += '<div class="flex items-center justify-between mb-4">';
+      html += '<div class="text-sm text-gray-400">' + formatDate(sessionStart) + ' · ' + formatTime(sessionStart) + ' – <span id="session-end-' + si + '">' + formatTime(sessionEnd) + '</span></div>';
+      html += '<div id="session-stats-' + si + '" class="text-sm text-gray-500">' + totalCal.toFixed(1) + ' kcal · ' + (totalDist / 1000).toFixed(2) + ' km · ' + formatDurationLong(totalDur) + '</div>';
+      html += '</div>';
+    }
 
     // Live segment placeholder at top of newest session (below header).
-    if (si === 0) {
+    if (si === 0 && isToday) {
       // Store closed-segment totals for merging with live segment.
       window._sessionClosedCal = totalCal;
       window._sessionClosedDist = totalDist;
       window._sessionClosedDur = totalDur;
       html += '<div id="activity-live-inner"></div>';
+    }
+
+    if (isEmpty) {
+      html += '<div id="activity-empty" class="text-center text-sm text-gray-600 py-4">No activity</div>';
     }
 
     session.forEach((seg, segi) => {
@@ -701,11 +713,17 @@ function renderLiveSegment(seg) {
   if (outerEl) outerEl.innerHTML = '';
   if (innerEl) innerEl.innerHTML = '';
 
+  // Hide "No activity" placeholder when live segment arrives.
+  const emptyEl = document.getElementById('activity-empty');
+  if (emptyEl) emptyEl.style.display = seg ? 'none' : '';
+
   if (!seg) return;
 
   // Check if live segment is adjacent to the last closed segment (< 60 min gap).
   const segStart = new Date(seg.started_at).getTime() / 1000;
   const adjacent = window._lastClosedEnd && (segStart - window._lastClosedEnd) < 3600;
+  // Also render into innerEl when there are no closed segments (empty session panel for today).
+  const useInner = innerEl && (adjacent || !window._lastClosedEnd);
 
   let html = renderSegmentCard(seg);
   // Show pause gap below live segment if adjacent to closed segments.
@@ -718,24 +736,36 @@ function renderLiveSegment(seg) {
     }
   }
 
-  if (adjacent && innerEl) {
+  if (useInner) {
     innerEl.innerHTML = html;
   } else if (outerEl) {
     outerEl.innerHTML = html;
   }
 
-  // Update the first session's header to include the live segment.
-  const statsEl = document.getElementById('session-stats-0');
-  const endEl = document.getElementById('session-end-0');
-  if (statsEl && seg.moving) {
-    const cal = (window._sessionClosedCal || 0) + seg.active_calories_kcal;
-    const dist = (window._sessionClosedDist || 0) + seg.distance_m;
-    const dur = (window._sessionClosedDur || 0) + seg.duration_s;
-    statsEl.textContent = cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur);
-  }
-  if (endEl) {
-    const segEnd = new Date(new Date(seg.started_at).getTime() + seg.duration_s * 1000);
-    endEl.textContent = formatTime(segEnd);
+  // Create or update the first session's header.
+  const cal = (window._sessionClosedCal || 0) + (seg.moving ? seg.active_calories_kcal : 0);
+  const dist = (window._sessionClosedDist || 0) + (seg.moving ? seg.distance_m : 0);
+  const dur = (window._sessionClosedDur || 0) + (seg.moving ? seg.duration_s : 0);
+  const segEnd = new Date(new Date(seg.started_at).getTime() + seg.duration_s * 1000);
+
+  let statsEl = document.getElementById('session-stats-0');
+  let endEl = document.getElementById('session-end-0');
+
+  // If no header exists yet (no closed segments), create one.
+  if (!statsEl && useInner && innerEl) {
+    const segStartDate = new Date(seg.started_at);
+    const headerHtml = '<div class="flex items-center justify-between mb-4">' +
+      '<div class="text-sm text-gray-400">' + formatDate(segStartDate) + ' · ' + formatTime(segStartDate) + ' – <span id="session-end-0">' + formatTime(segEnd) + '</span></div>' +
+      '<div id="session-stats-0" class="text-sm text-gray-500">' + cal.toFixed(1) + ' kcal · ' + (dist / 1000).toFixed(2) + ' km · ' + formatDurationLong(dur) + '</div>' +
+      '</div>';
+    innerEl.parentElement.insertAdjacentHTML('afterbegin', headerHtml);
+  } else {
+    if (statsEl) {
+      statsEl.textContent = cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur);
+    }
+    if (endEl) {
+      endEl.textContent = formatTime(segEnd);
+    }
   }
 }
 

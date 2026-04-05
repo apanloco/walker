@@ -117,7 +117,9 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     live::spawn_disconnect_checker(live_ctx.clone());
 
     // Stale cookie middleware: if walker_id references a non-existent user, clear it.
+    // Dev mode: set walker_dev cookie so the dashboard knows.
     let stale_pool = pool.clone();
+    let is_dev = config.dev;
     let app = Router::new()
         .merge(auth::routes().with_state(auth_state))
         .merge(update::routes().with_state(live_ctx.clone()))
@@ -139,6 +141,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
                                     .headers_mut()
                                     .insert(axum::http::header::SET_COOKIE, val);
                             }
+                        }
+                    }
+                    // Set walker_dev cookie in dev mode (checked by dashboard JS).
+                    if is_dev {
+                        if let Ok(val) = "walker_dev=1; Path=/; SameSite=Lax".parse() {
+                            response
+                                .headers_mut()
+                                .append(axum::http::header::SET_COOKIE, val);
                         }
                     }
                     response
