@@ -1,3 +1,11 @@
+// -- XSS protection --
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 // -- Page initialization (determined by URL, no client-side routing) --
 
 function initPage() {
@@ -112,7 +120,7 @@ document.addEventListener('click', (e) => {
 
 function buildAvatarButton(avatarUrl) {
   const avatar = avatarUrl
-    ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700 hover:ring-walker-500 transition-all cursor-pointer" src="' + avatarUrl + '" alt="">'
+    ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700 hover:ring-walker-500 transition-all cursor-pointer" src="' + esc(avatarUrl) + '" alt="">'
     : '<div class="w-8 h-8 rounded-full bg-gray-700 ring-2 ring-gray-600 hover:ring-walker-500 transition-all cursor-pointer flex items-center justify-center"><svg class="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg></div>';
 
   navUser.innerHTML =
@@ -184,11 +192,11 @@ function renderLeaderboard(elementId, entries) {
     <div class="relative group flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
       <div class="w-6 text-right text-sm">${rankBadge(i)}</div>
       ${e.avatar_url
-        ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700" src="' + e.avatar_url + '" alt="">'
-        : '<div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">' + e.name[0].toUpperCase() + '</div>'
+        ? '<img class="w-8 h-8 rounded-full ring-2 ring-gray-700" src="' + esc(e.avatar_url) + '" alt="">'
+        : '<div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">' + esc(e.name[0].toUpperCase()) + '</div>'
       }
       <div class="flex-1 min-w-0">
-        <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${e.name}</a>
+        <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${esc(e.name)}</a>
         <div class="flex items-center gap-1 mt-0.5">${statusIndicator(e)}</div>
       </div>
       <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
@@ -472,12 +480,12 @@ function renderProfile(p) {
     <!-- Hero -->
     <div class="flex items-start gap-5 mb-8">
       ${p.avatar_url
-        ? '<img class="w-20 h-20 rounded-full ring-4 ring-walker-500/20" src="' + p.avatar_url + '" alt="">'
-        : '<div class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center text-3xl font-bold text-gray-400 ring-4 ring-walker-500/20">' + p.name[0].toUpperCase() + '</div>'
+        ? '<img class="w-20 h-20 rounded-full ring-4 ring-walker-500/20" src="' + esc(p.avatar_url) + '" alt="">'
+        : '<div class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center text-3xl font-bold text-gray-400 ring-4 ring-walker-500/20">' + esc(p.name[0].toUpperCase()) + '</div>'
       }
       <div>
-        <div class="text-3xl font-extrabold text-white">${p.name}</div>
-        ${p.email ? '<div class="text-xs text-gray-500 mt-0.5">' + p.email + '</div>' : ''}
+        <div class="text-3xl font-extrabold text-white">${esc(p.name)}</div>
+        ${p.email ? '<div class="text-xs text-gray-500 mt-0.5">' + esc(p.email) + '</div>' : ''}
         ${p.streak > 0 ? '<div class="flex items-center gap-1.5 mt-1"><span class="text-amber-400 text-lg">&#128293;</span><span class="text-amber-400 font-bold text-lg">' + p.streak + '</span><span class="text-amber-400/70 text-sm">day streak</span></div>' : ''}
         ${liveBadge}
       </div>

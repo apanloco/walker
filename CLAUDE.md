@@ -14,13 +14,13 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 ## TODO
 
-1. **XSS in `app.js`** — User-controlled strings (names, avatar URLs, emails) are interpolated directly into HTML via template literals and string concatenation. Add an `escapeHtml()` helper and apply it to all user-sourced values before HTML insertion.
+1. ~~**XSS in `app.js`**~~ — Fixed: `esc()` helper escapes all user-controlled strings (names, avatar URLs, emails) before HTML insertion. Raw data stored in DB, escaped on render.
 
 2. ~~**Silent error swallowing across the server**~~ — Fixed: DB errors now return 500 instead of empty data, `get_user()` returns `Result<Option<T>>`, frontend logs errors to console.
 
 3. ~~**Auth race conditions**~~ — Fixed by auth overhaul (localhost callback replaces device codes entirely).
 
-4. **Reporter has no retry or feedback** — `reporter.rs` fire-and-forgets HTTP posts with `tokio::spawn`. Lost updates are silent. Add bounded retry (1–2 attempts with short delay) for transient network failures.
+4. ~~**Reporter has no retry or feedback**~~ — Not needed: every heartbeat (1s) sends the full current state idempotently. A lost update self-heals on the next successful heartbeat. Server disconnect checker (30s) handles total loss.
 
 5. ~~**Device code memory leak**~~ — Fixed by auth overhaul (no more in-memory device codes — no device codes at all).
 
