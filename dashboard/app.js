@@ -802,11 +802,8 @@ function formatDurationLong(secs) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = Math.floor(secs % 60);
-  if (h > 0 && m > 0) return h + 'h ' + m + ' min';
-  if (h > 0) return h + ' hour' + (h > 1 ? 's' : '');
-  if (m > 0 && s > 0) return m + ' min ' + s + ' sec';
-  if (m > 0) return m + ' min';
-  return s + ' sec';
+  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
 function formatDate(date) {
