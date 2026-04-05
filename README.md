@@ -8,49 +8,16 @@ Real-time treadmill tracking. Connect a Bluetooth walking machine, track your wa
 
 Walker connects to your Bluetooth treadmill, detects when you're actually walking (not just standing on the belt), and computes honest calories using research-backed MET values. Data streams to a server that powers a live dashboard with leaderboards, profiles, heatmaps, and detailed activity logs.
 
-**Steps detect, speed measures, server computes.** Treadmills lie about calories — Walker doesn't.
+**Steps detect, speed measures, server computes.**
 
 ## Quick Start
 
-### 1. Server
-
 ```bash
-# Start a local Postgres database
-./reset_db.sh
-
-# Run the server (seeds fake history for testing)
-cargo run -- listen --dev
+walker login                 # authenticate (opens browser)
+walker walk                  # connect to treadmill and start tracking
 ```
 
-Dashboard is now at http://localhost:3000.
-
-### 2. Login
-
-```bash
-# CLI login (opens browser)
-walker login --dev
-
-# Or just click "Dev Login" on http://localhost:3000
-```
-
-### 3. Walk (or simulate)
-
-```bash
-# Connect to a real treadmill
-walker walk --dev
-
-# Or simulate walking without hardware
-walker simulate --dev
-
-# Simulate multiple users
-walker simulate --dev --count 5
-```
-
-### 4. Explore
-
-- **Leaderboard** — live rankings with walking/idle indicators
-- **Profile** — heatmap, weekly bars, personal records, food equivalents
-- **Activity** — segment-by-segment breakdown of each day
+Open the dashboard at https://walker.akerud.se to see your stats, compete on the leaderboard, and explore your activity history.
 
 ## Supported Devices
 
@@ -100,6 +67,15 @@ See [CLAUDE.md](CLAUDE.md) for the full spec — it's the source of truth for ho
 | `WALKER_GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `WALKER_GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `WALKER_GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+
+## Local Development
+
+```bash
+./reset_db.sh                        # fresh Postgres in Docker
+cargo run -- listen --dev             # server with seed data at localhost:3000
+cargo run -- login --dev              # click "Dev Login" in browser
+cargo run -- simulate --dev --count 5 # simulate walkers
+```
 
 ## Deployment
 

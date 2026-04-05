@@ -35,6 +35,12 @@ function initPage() {
   const tabEl = document.getElementById('tab-' + page);
   if (tabEl) tabEl.classList.add('active');
 
+  // Show hero banner for logged-out visitors on the leaderboard.
+  if (page === 'leaderboard' && !loggedInId) {
+    var hero = document.getElementById('hero-banner');
+    if (hero) hero.classList.remove('hidden');
+  }
+
   if (page === 'profile') {
     fetchProfile();
   } else if (page === 'activity') {
