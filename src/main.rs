@@ -391,7 +391,6 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                         activity_tracker.reset();
                         display::print_data_row(
                             &data,
-                            step_tracker.total,
                             &activity_tracker.state(),
                         );
                         if let Some(ref mut rpt) = server_reporter {
@@ -400,11 +399,12 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                         lines_since_header += 1;
                         continue;
                     }
-                    let steps = data.steps.and_then(|raw| step_tracker.update(raw));
+                    let step_change = data.steps.map(|raw| step_tracker.update(raw))
+                        .unwrap_or(device::StepChange::Baseline);
                     let treadmill_running = data.status == TreadmillStatus::Running;
                     let activity =
-                        activity_tracker.update(steps, treadmill_running, data.speed_kmh);
-                    display::print_data_row(&data, step_tracker.total, &activity);
+                        activity_tracker.update(step_change, treadmill_running, data.speed_kmh);
+                    display::print_data_row(&data, &activity);
                     if let Some(ref mut rpt) = server_reporter {
                         rpt.maybe_send(&activity, data.speed_kmh);
                     }
@@ -415,7 +415,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                         rpt.send_stopped();
                     }
                     // Standby/Off = session ended, step counter will reset to 0.
-                    // Reset trackers so the jump isn't mistaken for a 10k wrap.
+                    // Reset trackers so the jump isn't mistaken for activity.
                     if matches!(status, TreadmillStatus::Standby | TreadmillStatus::Off) {
                         step_tracker.reset();
                         activity_tracker.reset();

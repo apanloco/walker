@@ -30,6 +30,10 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 8. ~~**Landing/onboarding page**~~ — Done: README.md written with quick start, supported devices, CLI commands, architecture overview. Login page updated with tagline and GitHub link. Leaderboard remains the logged-in default.
 
+9. **BLE device control: speed increase/decrease** — Support writing to the treadmill to change speed from the command line during `walker walk`. Requires reverse-engineering the write commands for each device profile.
+
+10. ~~**Simplify step tracking and CLI display**~~ — Done: `StepTracker` now returns a `StepChange` enum (`Baseline`/`Changed`/`Unchanged`) instead of maintaining a running total with wraparound math. `ActivityTracker` matches on the enum directly. CLI display shows raw treadmill step value instead of computed total.
+
 ## License
 
 MIT. Use super permissive licenses for all code and dependencies where possible.
@@ -47,7 +51,7 @@ Production: `https://walker.akerud.se`
 ```
 src/
   main.rs          — CLI (clap) + command orchestration
-  activity.rs      — ActivityTracker: infers walking/idle from step deltas
+  activity.rs      — ActivityTracker: infers walking/idle from step changes
   auth.rs          — client-side auth: login flow, token storage (client-only)
   ble.rs           — BLE adapter, scanning, Bluetooth permission check (client-only)
   reporter.rs      — sends updates to server via HTTP POST (client-only)
@@ -87,15 +91,15 @@ Two features: `client` (BLE, terminal UI) and `server` (HTTP, WebSocket, DB). Bo
 1. **Raw device data** (`TreadmillData`) — what the treadmill reports. The treadmill lies: distance/calories keep ticking when you step off the belt, but steps stop.
 
 2. **Activity state** — three-phase state machine inferred from step data by the client:
-   - **INIT** → **WALKING**: first step increase detected. Only transition out of INIT.
-   - **WALKING** → **IDLE**: no step increase for idle timeout (see [Timeouts & Intervals](#timeouts--intervals)).
-   - **IDLE** → **WALKING**: step increase detected.
+   - **INIT** → **WALKING**: first step change detected. Only transition out of INIT.
+   - **WALKING** → **IDLE**: no step change for idle timeout (see [Timeouts & Intervals](#timeouts--intervals)).
+   - **IDLE** → **WALKING**: step change detected.
    - **INIT → IDLE**: impossible. Can't claim idle without first confirming walking.
    - **Any reset** (Pausing/Paused/Standby/Off/BLE reconnect) → **INIT**.
 
    The client does not report to the server during INIT. The first report is always a confirmed state. This prevents false idle segments at startup when the treadmill has a non-zero step counter from a previous session.
 
-   Step counts use `Option<u64>`: `None` = no baseline yet (first reading establishes baseline without triggering WALKING).
+   `StepTracker` returns a `StepChange` enum: `Baseline` (first reading, no comparison yet), `Changed` (raw value differs), `Unchanged` (same as previous). `ActivityTracker` matches on this directly.
 
 3. **Segments** — the source of truth in the database. See [Segment-Based Tracking](#segment-based-tracking).
 
@@ -230,7 +234,7 @@ All timing constants in one place. Referenced throughout this doc.
 | Name | Value | Where | Purpose |
 |------|-------|-------|---------|
 | Client heartbeat | ~1s | reporter.rs | How often the client sends updates to the server |
-| Client idle detection | 5s (≥2 km/h), 10s (<2 km/h) | activity.rs | Speed-dependent: no step increase → IDLE |
+| Client idle detection | 3s (≥2 km/h), 6s (1.5–2), 10s (<1.5) | activity.rs | Speed-dependent: no step change → IDLE |
 | BLE silent disconnect | 10s | ble.rs | Detect treadmill that stopped sending data |
 | BLE reconnect retry | 3s | ble.rs | Delay before scanning again after disconnect |
 | BLE quick scan | 1s | ble.rs | Fast scan before falling back to full scan |

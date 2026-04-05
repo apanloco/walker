@@ -47,7 +47,7 @@ fn pad_dimmed(text: &str, width: usize) -> String {
     format!("{text:<width$}").dimmed().to_string()
 }
 
-pub fn print_data_row(data: &TreadmillData, total_steps: u64, activity: &ActivityState) {
+pub fn print_data_row(data: &TreadmillData, activity: &ActivityState) {
     let status_name = data.status.display_name();
     let duration = format!(
         "{:>3}:{:02}",
@@ -66,7 +66,10 @@ pub fn print_data_row(data: &TreadmillData, total_steps: u64, activity: &Activit
     );
     let speed = format!("{:.1} km/h", data.speed_kmh);
     let distance = format!("{:.2} km", data.distance_km);
-    let steps = format!("{total_steps}");
+    let steps = match data.steps {
+        Some(s) => format!("{s}"),
+        None => "—".to_string(),
+    };
 
     use crate::activity::ActivityPhase;
     let activity_col = match activity.phase {
