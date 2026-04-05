@@ -233,35 +233,38 @@ pub async fn reopen_previous_walking_segment(
 /// Calories are computed at query time via SQL functions — not stored.
 ///   - `end_time`: SQL expression for the segment's end time (e.g. "now()" or "last_heartbeat_at")
 ///   - `extra_sets`: additional SET clauses (e.g. "open = false")
-fn open_segment_update_sql(end_time: &str, extra_sets: &str) -> String {
-    let comma = if extra_sets.is_empty() { "" } else { "," };
-    format!(
-        "UPDATE segments SET
-            duration_s = EXTRACT(EPOCH FROM {end_time} - started_at),
-            distance_m = CASE WHEN moving THEN
-                speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM {end_time} - started_at)
-                ELSE 0 END,
-            last_heartbeat_at = NOW()
-            {comma} {extra_sets}
-         WHERE id = $1"
-    )
-}
-
 /// Close a segment: compute final values and mark as closed.
 pub async fn close_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<()> {
-    sqlx::query(&open_segment_update_sql("now()", "open = false"))
-        .bind(segment_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE segments SET
+            duration_s = EXTRACT(EPOCH FROM now() - started_at),
+            distance_m = CASE WHEN moving THEN
+                speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM now() - started_at)
+                ELSE 0 END,
+            last_heartbeat_at = NOW(),
+            open = false
+         WHERE id = $1",
+    )
+    .bind(segment_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 /// Update an open segment's duration, calories, and distance (heartbeat).
 pub async fn update_open_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<()> {
-    sqlx::query(&open_segment_update_sql("now()", ""))
-        .bind(segment_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE segments SET
+            duration_s = EXTRACT(EPOCH FROM now() - started_at),
+            distance_m = CASE WHEN moving THEN
+                speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM now() - started_at)
+                ELSE 0 END,
+            last_heartbeat_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(segment_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -301,11 +304,23 @@ pub async fn close_stale_segments(
     .await?;
 
     let mut user_ids = Vec::new();
-    let sql = open_segment_update_sql("last_heartbeat_at", "open = false");
     for row in &rows {
         let id: i64 = row.get("id");
         let user_id: uuid::Uuid = row.get("user_id");
-        if let Err(e) = sqlx::query(&sql).bind(id).execute(pool).await {
+        if let Err(e) = sqlx::query(
+            "UPDATE segments SET
+                duration_s = EXTRACT(EPOCH FROM last_heartbeat_at - started_at),
+                distance_m = CASE WHEN moving THEN
+                    speed_kmh * 1000.0 / 3600.0 * EXTRACT(EPOCH FROM last_heartbeat_at - started_at)
+                    ELSE 0 END,
+                last_heartbeat_at = NOW(),
+                open = false
+             WHERE id = $1",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        {
             tracing::error!(error = %e, segment_id = id, "Failed to close stale segment");
         } else {
             user_ids.push(user_id);
