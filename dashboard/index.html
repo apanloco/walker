@@ -61,7 +61,7 @@ tailwind.config = {
 }
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 /* ===== Theme: C64 ===== */
 .theme-c64 {
@@ -75,7 +75,8 @@ tailwind.config = {
   --heat-0: 45 41 80; --heat-1: 40 38 120; --heat-2: 60 57 160;
   --heat-3: 112 109 235; --heat-4: 160 158 245; --heat-gold: 237 241 113;
   --status-walking: 160 160 224; --status-idle: 237 241 113;
-  font-family: 'Pixelify Sans', monospace;
+  font-family: 'Press Start 2P', monospace;
+  text-transform: uppercase;
 }
 
 /* ===== Theme: Material ===== */
@@ -111,7 +112,14 @@ tailwind.config = {
 /* ===== C64-Specific ===== */
 .theme-c64 *, .theme-c64 *::before, .theme-c64 *::after { border-radius: 0 !important; }
 .theme-c64 .theme-panel { border: 2px solid rgb(var(--gray-700)); box-shadow: 4px 4px 0 rgb(var(--gray-950)); }
-.theme-c64 { font-size: 18px; --hm-label-w: 36px; --bar-day-w: 40px; --bar-kcal-w: 140px; }
+.theme-c64 { font-size: 12px; --hm-label-w: 36px; --bar-day-w: 48px; --bar-kcal-w: 180px; }
+/* Press Start 2P: flatten Tailwind's size hierarchy — everything should feel uniform */
+.theme-c64 .text-3xl { font-size: 14px !important; }
+.theme-c64 .text-2xl { font-size: 13px !important; }
+.theme-c64 .text-xl { font-size: 12px !important; }
+.theme-c64 .text-lg { font-size: 12px !important; }
+.theme-c64 .text-sm { font-size: 11px !important; }
+.theme-c64 .text-xs { font-size: 11px !important; }
 .theme-c64 .logo-text { font-size: 18px !important; letter-spacing: 0.1em; text-transform: uppercase; }
 .theme-c64 .text-white { color: rgb(160 160 224) !important; }
 .theme-c64::after {
