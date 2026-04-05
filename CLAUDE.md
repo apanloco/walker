@@ -8,6 +8,8 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 **Look broadly before implementing.** Every new feature is an opportunity to simplify what's already there. Before writing new code, check existing structs, queries, and patterns — consolidate, remove dead code, and unify duplicates. Don't add a new thing next to an old thing that does almost the same job.
 
+**Discuss before implementing.** Always propose an approach and get agreement before writing code. Don't jump straight into implementation — discuss the idea and alternatives first. Never enter planning mode unless explicitly asked.
+
 **CLAUDE.md must be updated as part of every task.** Any change to behavior, architecture, protocol, or UI must be reflected here before the task is considered done. This file is what future conversations read first — if it's wrong, everything built on it will be wrong.
 
 ## TODO
