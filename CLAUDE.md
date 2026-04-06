@@ -425,6 +425,12 @@ Middleware checks the `walker_id` cookie on every request. If the cookie referen
 
 `--dev` flag on `login`, `logout`, `walk`, `simulate` switches between files.
 
+### XSS & SQL Injection
+
+**XSS:** User-controlled data (names, avatar URLs, emails) comes from OAuth providers and is stored raw in the database. The `esc()` helper in `app.js` escapes all user-controlled strings before HTML insertion (uses `textContent`→`innerHTML` to escape `<`, `>`, `&`, `"`). Escaping happens on render, not on storage — this preserves the original data and lets each rendering context (HTML, JSON) escape appropriately.
+
+**SQL injection:** All database queries use parameterized bindings (`$1`, `$2` via sqlx). User input never touches SQL strings. No dynamic SQL construction from user data.
+
 ### Dev Mode Auth
 
 Dev mode requires full login, same as production. No auto-injected cookies or hardcoded tokens. The only difference is the dev provider is available:
