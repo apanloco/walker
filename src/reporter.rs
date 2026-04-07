@@ -1,6 +1,6 @@
 use crate::activity::ActivityState;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Sends updates to the walker server via HTTP POST.
 /// Only sends on state changes or every heartbeat_interval seconds.
@@ -11,6 +11,8 @@ pub struct ServerReporter {
     last_sent: Option<SentState>,
     last_send_time: Option<Instant>,
     heartbeat_secs: f64,
+    send_count: u64,
+    count_start: Instant,
 }
 
 #[derive(Clone, PartialEq)]
@@ -28,6 +30,8 @@ impl ServerReporter {
             last_sent: None,
             last_send_time: None,
             heartbeat_secs: 1.0,
+            send_count: 0,
+            count_start: Instant::now(),
         }
     }
 
@@ -47,18 +51,54 @@ impl ServerReporter {
             speed_kmh_x10: (speed_kmh * 10.0) as i32,
         };
 
-        let should_send = match (&self.last_sent, &self.last_send_time) {
+        let reason = match (&self.last_sent, &self.last_send_time) {
             // Never sent → send.
-            (None, _) => true,
+            (None, _) => Some("first"),
             // State changed → send immediately.
-            (Some(prev), _) if *prev != current => true,
+            (Some(prev), _) if *prev != current => Some("change"),
             // Heartbeat: enough time elapsed.
-            (_, Some(last)) => last.elapsed().as_secs_f64() >= self.heartbeat_secs,
-            _ => false,
+            (_, Some(last)) if last.elapsed().as_secs_f64() >= self.heartbeat_secs => {
+                Some("heartbeat")
+            }
+            _ => None,
         };
 
-        if !should_send {
+        let Some(reason) = reason else {
             return;
+        };
+
+        // Log reason + elapsed since last send.
+        let elapsed = self
+            .last_send_time
+            .map(|t| t.elapsed().as_secs_f64())
+            .unwrap_or(0.0);
+        if reason == "change" {
+            let prev = self.last_sent.as_ref().unwrap();
+            info!(
+                reason,
+                elapsed_ms = format!("{:.0}", elapsed * 1000.0),
+                prev_state = prev.state,
+                prev_speed = prev.speed_kmh_x10,
+                new_state = current.state,
+                new_speed = current.speed_kmh_x10,
+                "Reporter send"
+            );
+        } else {
+            debug!(reason, elapsed_ms = format!("{:.0}", elapsed * 1000.0), "Reporter send");
+        }
+
+        // Rate summary every 10 seconds.
+        self.send_count += 1;
+        let window = self.count_start.elapsed().as_secs_f64();
+        if window >= 10.0 {
+            info!(
+                sends = self.send_count,
+                window_secs = format!("{:.1}", window),
+                rate = format!("{:.1}", self.send_count as f64 / window),
+                "Reporter rate"
+            );
+            self.send_count = 0;
+            self.count_start = Instant::now();
         }
 
         self.last_sent = Some(current);
@@ -68,11 +108,16 @@ impl ServerReporter {
     }
 
     /// Send a "stopped" signal — treadmill went to standby/off.
+    /// Skips if already sent "stopped" (dedup like maybe_send).
     pub fn send_stopped(&mut self) {
-        self.last_sent = Some(SentState {
+        let stopped = SentState {
             state: "stopped",
             speed_kmh_x10: 0,
-        });
+        };
+        if self.last_sent.as_ref() == Some(&stopped) {
+            return;
+        }
+        self.last_sent = Some(stopped);
         self.last_send_time = Some(Instant::now());
         self.fire_send("stopped", 0.0);
     }

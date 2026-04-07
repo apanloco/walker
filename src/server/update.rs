@@ -6,15 +6,42 @@ use axum::{
     routing::{post, put},
 };
 use serde::Deserialize;
+use tower_governor::{GovernorLayer, GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor};
 use tracing::{debug, error, warn};
 
 use super::db;
 use super::live::{self, SharedLive};
 
+/// Rate limit key: Bearer token if present, otherwise "unauthenticated".
+/// Unauthenticated requests still pass through (the handler rejects them),
+/// but they share a single rate-limit bucket to prevent unauthenticated spam.
+#[derive(Debug, Clone)]
+struct BearerTokenKey;
+
+impl KeyExtractor for BearerTokenKey {
+    type Key = String;
+
+    fn extract<B>(&self, req: &axum::http::Request<B>) -> Result<Self::Key, GovernorError> {
+        Ok(req
+            .headers()
+            .get("authorization")
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .and_then(|v: &str| v.strip_prefix("Bearer "))
+            .unwrap_or("unauthenticated")
+            .to_owned())
+    }
+}
+
 pub fn routes() -> Router<SharedLive> {
+    let mut governor_conf = GovernorConfigBuilder::default().key_extractor(BearerTokenKey);
+    governor_conf.period(std::time::Duration::from_millis(100)); // 10 req/s
+    governor_conf.burst_size(20);
+    let governor_conf = governor_conf.finish().unwrap();
+
     Router::new()
         .route("/api/update", post(handle_update))
         .route("/api/weight", put(handle_set_weight))
+        .route_layer(GovernorLayer::new(governor_conf))
 }
 
 #[derive(Deserialize)]

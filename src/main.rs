@@ -60,7 +60,7 @@ enum Command {
     /// Simulate a treadmill (no BLE needed)
     #[cfg(feature = "client")]
     Simulate {
-        /// Walking speed in mph
+        /// Walking speed in km/h
         #[arg(short, long, default_value = "2.5")]
         speed: f32,
         /// Number of fake users to simulate
@@ -305,6 +305,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
     let mut step_tracker = StepTracker::new();
     let mut activity_tracker = ActivityTracker::new();
     let mut lines_since_header: u32 = 0;
+    let mut last_display: Option<(TreadmillStatus, i32, u16, Option<u16>, activity::ActivityPhase)> = None;
 
     loop {
         let (device, profile) = loop {
@@ -396,9 +397,6 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                 uuid = %notification.uuid,
                 "BLE notification received",
             );
-            if lines_since_header.is_multiple_of(20) {
-                display::print_walk_header();
-            }
 
             match profile.parse_notification(&notification.uuid, &notification.value) {
                 Some(TreadmillEvent::Data(data)) => {
@@ -409,14 +407,19 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                     ) {
                         step_tracker.reset();
                         activity_tracker.reset();
-                        display::print_data_row(
-                            &data,
-                            &activity_tracker.state(),
-                        );
+                        let activity = activity_tracker.state();
+                        let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
+                        if last_display.as_ref() != Some(&key) {
+                            if lines_since_header.is_multiple_of(20) {
+                                display::print_walk_header();
+                            }
+                            display::print_data_row(&data, &activity);
+                            lines_since_header += 1;
+                            last_display = Some(key);
+                        }
                         if let Some(ref mut rpt) = server_reporter {
                             rpt.send_stopped();
                         }
-                        lines_since_header += 1;
                         continue;
                     }
                     let step_change = data.steps.map(|raw| step_tracker.update(raw))
@@ -424,7 +427,15 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                     let treadmill_running = data.status == TreadmillStatus::Running;
                     let activity =
                         activity_tracker.update(step_change, treadmill_running, data.speed_kmh);
-                    display::print_data_row(&data, &activity);
+                    let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
+                    if last_display.as_ref() != Some(&key) {
+                        if lines_since_header.is_multiple_of(20) {
+                            display::print_walk_header();
+                        }
+                        display::print_data_row(&data, &activity);
+                        lines_since_header += 1;
+                        last_display = Some(key);
+                    }
                     if let Some(ref mut rpt) = server_reporter {
                         rpt.maybe_send(&activity, data.speed_kmh);
                     }
@@ -449,7 +460,6 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                     display::print_other_notification(&notification.uuid, &notification.value);
                 }
             }
-            lines_since_header += 1;
         }
 
         // Stream ended — device disconnected.
