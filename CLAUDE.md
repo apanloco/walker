@@ -15,6 +15,9 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 ## TODO
 
 1. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
+2. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
+3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
+4. **Interpolate MET values** — The current `met_for_speed()` is a step function from the Compendium: wide speed ranges map to the same MET (e.g., 2.0–3.0 km/h all return 2.8). This means a 50% speed increase can show zero calorie difference. Linearly interpolate between the Compendium breakpoints so MET scales smoothly with speed. One SQL function change, retroactive to all history.
 
 ## License
 
@@ -118,6 +121,8 @@ Authorization: Bearer <token>
 `state` is one of `walking`, `idle`, or `stopped`. Speed is always in **km/h**.
 
 Sent on state change + every heartbeat interval while connected. Client does **not** report during treadmill `Pausing`/`Paused` state — these trigger an immediate `stopped` + tracker reset instead.
+
+**Rate limiting:** Authenticated endpoints are rate-limited per Bearer token using `tower_governor` (GCRA algorithm). 10 requests/second sustained, burst of 20. Requests without a Bearer token share a single "unauthenticated" bucket (the handler rejects them with 401 anyway, but this prevents unauthenticated spam). Rate limit is per-token, not per-IP, so multiple users behind the same NAT are not affected.
 
 ### Segment-Based Tracking
 
@@ -228,6 +233,7 @@ All timing constants in one place. Referenced throughout this doc.
 | Session gap | 60 min | app.js | Gap between segments that creates a new session |
 | Dashboard leaderboard poll | 5s | app.js | Client-side polling interval for leaderboard |
 | Token expiry | 180 days | db.rs | Bearer tokens expire after this |
+| Update rate limit | 10 req/s, burst 20 | update.rs | Per-token rate limit on authenticated endpoints |
 
 ### Server → Viewer Protocol
 
