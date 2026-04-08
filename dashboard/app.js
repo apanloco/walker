@@ -793,7 +793,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-300" style="grid-column:4">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
     html += '<span class="text-gray-300" style="grid-column:5">' + seg.active_calories_kcal.toFixed(1) + ' <span class="text-gray-600">/ ' + seg.calories_kcal.toFixed(1) + '</span> kcal</span>';
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
-    html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(1) + '</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(2) + '</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
     html += '</div>';
     html += '</div>';
