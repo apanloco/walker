@@ -306,6 +306,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
     let mut activity_tracker = ActivityTracker::new();
     let mut lines_since_header: u32 = 0;
     let mut last_display: Option<(TreadmillStatus, i32, u16, Option<u16>, activity::ActivityPhase)> = None;
+    let mut last_status_only: Option<TreadmillStatus> = None;
 
     loop {
         let (device, profile) = loop {
@@ -400,6 +401,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
 
             match profile.parse_notification(&notification.uuid, &notification.value) {
                 Some(TreadmillEvent::Data(data)) => {
+                    last_status_only = None;
                     // Pausing/Paused = belt stopping. Reset everything.
                     if matches!(
                         data.status,
@@ -441,6 +443,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                     }
                 }
                 Some(TreadmillEvent::StatusOnly(status)) => {
+                    last_display = None;
                     // All non-Running statuses send stopped to close the segment.
                     if let Some(ref mut rpt) = server_reporter {
                         rpt.send_stopped();
@@ -451,7 +454,10 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
                         step_tracker.reset();
                         activity_tracker.reset();
                     }
-                    display::print_status_row(&status, &notification.value);
+                    if last_status_only.as_ref() != Some(&status) {
+                        display::print_status_row(&status, &notification.value);
+                        last_status_only = Some(status);
+                    }
                 }
                 Some(TreadmillEvent::Unknown { data, .. }) => {
                     display::print_unknown_row("UREVO ???", &data);
