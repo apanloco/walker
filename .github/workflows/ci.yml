@@ -38,26 +38,48 @@ jobs:
           cargo install --locked cargo-deny
           cargo deny check
 
-  test:
-    name: Test (${{ matrix.os }})
+  build:
+    name: Build (${{ matrix.os }})
     needs: check
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            deps: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
           - os: macos-latest
-            deps: ""
           - os: windows-latest
-            deps: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install platform dependencies
-        if: matrix.deps != ''
-        run: ${{ matrix.deps }}
+      - name: Build
+        run: cargo build --verbose
+
+  test:
+    name: Test
+    needs: check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: walker
+          POSTGRES_DB: walker
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgres://postgres:walker@localhost/walker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux BLE dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - name: Build
         run: cargo build --verbose
       - name: Test

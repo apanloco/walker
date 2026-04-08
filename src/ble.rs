@@ -60,6 +60,7 @@ pub async fn scan(
 ) -> anyhow::Result<Vec<btleplug::platform::Peripheral>> {
     // Stop any stale scan (e.g. from another instance or pre-sleep state).
     let _ = adapter.stop_scan().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     adapter.start_scan(ScanFilter::default()).await?;
     tokio::time::sleep(Duration::from_secs(timeout)).await;
     adapter.stop_scan().await?;
@@ -92,7 +93,9 @@ pub async fn find_treadmill<'a>(
 ) -> anyhow::Result<Option<(btleplug::platform::Peripheral, &'a dyn TreadmillProfile)>> {
     // Quick check: maybe the adapter already knows about the device.
     // Stop any stale scan first (e.g. from another instance or pre-sleep state).
+    // Small delay after stop lets BlueZ release the scan lock before we start again.
     let _ = adapter.stop_scan().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     info!("Quick scan (1 second)...");
     adapter.start_scan(ScanFilter::default()).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;

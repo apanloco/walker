@@ -17,7 +17,6 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 1. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
 2. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
 3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
-4. **Interpolate MET values** — The current `met_for_speed()` is a step function from the Compendium: wide speed ranges map to the same MET (e.g., 2.0–3.0 km/h all return 2.8). This means a 50% speed increase can show zero calorie difference. Linearly interpolate between the Compendium breakpoints so MET scales smoothly with speed. One SQL function change, retroactive to all history.
 
 ## License
 
@@ -186,21 +185,9 @@ Both values are returned in all API responses. The dashboard shows active as pri
 
 Calories are **not stored** in the database — they're pure functions of speed, weight, and duration, computed on read. This means formula changes apply retroactively to all historical data with no migration.
 
-### MET Table (Compendium of Physical Activities, 2024, treadmill-specific)
+### MET Calculation (Compendium of Physical Activities, 2024, treadmill-specific)
 
-The MET lookup is defined once as a PostgreSQL function (`met_for_speed()`). No duplication in Rust or JavaScript.
-
-| km/h | MET |
-|------|-----|
-| <1.6 | 2.1 |
-| 1.6–3.0 | 2.8 |
-| 3.2–3.9 | 3.0 |
-| 4.0–4.7 | 3.5 |
-| 4.8–5.5 | 3.8 |
-| 5.6–6.3 | 4.8 |
-| 6.4–7.1 | 5.8 |
-| 7.2–7.9 | 6.8 |
-| ≥8.0 | 8.3 |
+The MET lookup is defined once as a PostgreSQL function (`met_for_speed()`) in `migrations/005_interpolate_met.sql`. No duplication in Rust or JavaScript. Uses piecewise linear interpolation between anchor points derived from the Compendium (0% grade, normal gait, no load entries). The anchor points, Compendium codes, and interpolation logic are documented in the migration file.
 
 Source: [Compendium of Physical Activities — Walking](https://pacompendium.com/walking/)
 
