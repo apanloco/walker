@@ -32,18 +32,7 @@ pub struct ActivityTracker {
 /// Idle timeout based on current speed. Slower speeds need longer timeouts
 /// because the treadmill's step sensor is less reliable at low speeds.
 fn idle_timeout_secs(speed_kmh: f32) -> f64 {
-    // Add entries here as needed. Must be sorted by speed ascending.
-    const TABLE: &[(f32, f64)] = &[
-        (1.5, 10.0),     // < 1.5 km/h: 10 seconds
-        (2.0, 6.0),      // 1.5–2.0 km/h: 6 seconds
-        (f32::MAX, 3.0), // >= 2.0 km/h: 3 seconds
-    ];
-    for &(threshold, timeout) in TABLE {
-        if speed_kmh < threshold {
-            return timeout;
-        }
-    }
-    5.0
+    if speed_kmh < 2.0 { 5.0 } else { 3.0 }
 }
 
 /// Snapshot of the current activity state for display/reporting.
