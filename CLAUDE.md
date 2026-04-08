@@ -208,7 +208,7 @@ All timing constants in one place. Referenced throughout this doc.
 | Name | Value | Where | Purpose |
 |------|-------|-------|---------|
 | Client heartbeat | ~1s | reporter.rs | How often the client sends updates to the server |
-| Client idle detection | 3s (≥2 km/h), 6s (1.5–2), 10s (<1.5) | activity.rs | Speed-dependent: no step change → IDLE |
+| Client idle detection | 3s (≥2 km/h), 5s (<2 km/h) | activity.rs | Speed-dependent: no step change → IDLE |
 | BLE silent disconnect | 10s | ble.rs | Detect treadmill that stopped sending data |
 | BLE reconnect retry | 3s | ble.rs | Delay before scanning again after disconnect |
 | BLE quick scan | 1s | ble.rs | Fast scan before falling back to full scan |
