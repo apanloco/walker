@@ -452,12 +452,20 @@ function renderProfile(p) {
     liveBadge = '<div class="flex items-center gap-2 mt-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-status-idle"></span><span class="text-status-idle text-sm">Idle</span></div>';
   }
 
-  // Weekly bars.
+  // Weekly bars — fill in missing days with zeroes.
   const now = new Date();
   const todayStr = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
-  const maxWeekCal = Math.max(...last7.map(d => d.active_calories_kcal), 0.1);
-  const weekBars = last7.map(d => {
-    const pct = Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3);
+  const dataByDate = {};
+  last7.forEach(d => { dataByDate[d.date] = d; });
+  const allDays = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    const dateStr = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+    allDays.push(dataByDate[dateStr] || { date: dateStr, active_calories_kcal: 0, calories_kcal: 0, distance_km: 0, active_secs: 0 });
+  }
+  const maxWeekCal = Math.max(...allDays.map(d => d.active_calories_kcal), 0.1);
+  const weekBars = allDays.map(d => {
+    const pct = d.active_calories_kcal > 0 ? Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3) : 0;
     const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
     const isToday = d.date === todayStr;
     const isLive = isToday && p.live && p.live.status === 'walking';
