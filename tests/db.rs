@@ -37,8 +37,9 @@ async fn active_cal(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f3
 
 #[sqlx::test(migrations = "./migrations")]
 async fn met_at_anchors(pool: PgPool) {
+    // At exact anchor speeds, MET should match the Compendium value within
+    // float rounding (tight tolerance — these are exact lookups, not interpolation).
     let cases = [
-        (0.80, 2.1),
         (1.61, 2.3),
         (2.49, 2.8),
         (3.54, 3.0),
@@ -52,8 +53,23 @@ async fn met_at_anchors(pool: PgPool) {
     for (speed, expected_met) in cases {
         let result = met(&pool, speed).await;
         assert!(
-            (result - expected_met).abs() < 0.05,
+            (result - expected_met).abs() < 0.001,
             "MET at {speed} km/h: expected {expected_met}, got {result}"
+        );
+    }
+}
+
+// -- Flat region below first anchor --
+
+#[sqlx::test(migrations = "./migrations")]
+async fn met_flat_below_first_anchor(pool: PgPool) {
+    // Compendium says MET 2.1 for the entire <1.0 mph range.
+    // No interpolation — should be exactly 2.1 everywhere below 1.61 km/h.
+    for speed in [0.0, 0.5, 0.8, 1.0, 1.2, 1.5, 1.6] {
+        let result = met(&pool, speed).await;
+        assert!(
+            (result - 2.1).abs() < 0.001,
+            "MET at {speed} km/h: expected flat 2.1, got {result}"
         );
     }
 }
@@ -62,14 +78,6 @@ async fn met_at_anchors(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn met_interpolates_between_anchors(pool: PgPool) {
-    // Midpoint between anchor 0.80 (MET 2.1) and anchor 1.61 (MET 2.3).
-    // Expected: 2.1 + 0.5 * (2.3 - 2.1) = 2.2
-    let result = met(&pool, 1.205).await;
-    assert!(
-        (result - 2.2).abs() < 0.05,
-        "MET at 1.205 km/h: expected ~2.2, got {result}"
-    );
-
     // Midpoint between anchor 1.61 (MET 2.3) and anchor 2.49 (MET 2.8).
     // Expected: 2.3 + 0.5 * (2.8 - 2.3) = 2.55
     let result = met(&pool, 2.05).await;
@@ -91,12 +99,14 @@ async fn met_interpolates_between_anchors(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn met_is_monotonically_increasing(pool: PgPool) {
-    let mut prev_met = 0.0_f32;
-    let mut speed = 0.5_f32;
+    // MET should never decrease as speed increases.
+    // Start at 1.61 (first anchor) — below that is flat 2.1.
+    let mut prev_met = 2.1_f32;
+    let mut speed = 1.61_f32;
     while speed <= 10.0 {
         let m = met(&pool, speed).await;
         assert!(
-            m >= prev_met,
+            m >= prev_met - 0.001, // float tolerance
             "MET decreased: {prev_met} at previous speed -> {m} at {speed} km/h"
         );
         prev_met = m;
@@ -108,16 +118,30 @@ async fn met_is_monotonically_increasing(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn met_clamps_at_extremes(pool: PgPool) {
-    let result = met(&pool, 0.0).await;
-    assert!(
-        (result - 2.1).abs() < 0.05,
-        "MET at 0 km/h: expected 2.1, got {result}"
-    );
-
+    // Very fast — should clamp to highest MET (8.3).
     let result = met(&pool, 15.0).await;
     assert!(
-        (result - 8.3).abs() < 0.05,
+        (result - 8.3).abs() < 0.001,
         "MET at 15 km/h: expected 8.3, got {result}"
+    );
+}
+
+// -- Step at 1.61 km/h boundary --
+
+#[sqlx::test(migrations = "./migrations")]
+async fn met_step_at_boundary(pool: PgPool) {
+    // Just below 1.61: flat 2.1
+    let below = met(&pool, 1.60).await;
+    assert!(
+        (below - 2.1).abs() < 0.001,
+        "MET at 1.60 km/h: expected 2.1, got {below}"
+    );
+
+    // At 1.61: anchor 2.3
+    let at = met(&pool, 1.61).await;
+    assert!(
+        (at - 2.3).abs() < 0.001,
+        "MET at 1.61 km/h: expected 2.3, got {at}"
     );
 }
 
