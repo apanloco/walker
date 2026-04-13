@@ -738,50 +738,61 @@ function renderLiveSegment(seg) {
   // Check if live segment is adjacent to the last closed segment (< 60 min gap).
   const segStart = new Date(seg.started_at).getTime() / 1000;
   const adjacent = window._lastClosedEnd && (segStart - window._lastClosedEnd) < 3600;
-  // Also render into innerEl when there are no closed segments (empty session panel for today).
+  // Render into the first session's inner placeholder when the live segment
+  // belongs to that session (adjacent, or no closed segments at all).
   const useInner = innerEl && (adjacent || !window._lastClosedEnd);
 
-  let html = renderSegmentCard(seg);
-  // Show pause gap below live segment if adjacent to closed segments.
-  if (adjacent && window._lastClosedEnd) {
-    const gap = segStart - window._lastClosedEnd;
-    if (gap > 5) {
-      html += '<div class="text-center text-xs text-gray-600 py-1.5">';
-      html += 'paused ' + formatDurationLong(gap);
-      html += '</div>';
-    }
-  }
-
-  if (useInner) {
-    innerEl.innerHTML = html;
-  } else if (outerEl) {
-    outerEl.innerHTML = html;
-  }
-
-  // Create or update the first session's header.
-  const cal = (window._sessionClosedCal || 0) + (seg.moving ? seg.active_calories_kcal : 0);
-  const dist = (window._sessionClosedDist || 0) + (seg.moving ? seg.distance_m : 0);
-  const dur = (window._sessionClosedDur || 0) + (seg.moving ? seg.duration_s : 0);
   const segEnd = new Date(new Date(seg.started_at).getTime() + seg.duration_s * 1000);
 
-  let statsEl = document.getElementById('session-stats-0');
-  let endEl = document.getElementById('session-end-0');
+  if (useInner) {
+    let html = renderSegmentCard(seg);
+    // Show pause gap below live segment if adjacent to closed segments.
+    if (adjacent && window._lastClosedEnd) {
+      const gap = segStart - window._lastClosedEnd;
+      if (gap > 5) {
+        html += '<div class="text-center text-xs text-gray-600 py-1.5">';
+        html += 'paused ' + formatDurationLong(gap);
+        html += '</div>';
+      }
+    }
+    innerEl.innerHTML = html;
 
-  // If no header exists yet (no closed segments), create one.
-  if (!statsEl && useInner && innerEl) {
-    const segStartDate = new Date(seg.started_at);
-    const headerHtml = '<div class="flex items-center justify-between mb-4">' +
-      '<div class="text-sm text-gray-400">' + formatDate(segStartDate) + ' · ' + formatTime(segStartDate) + ' – <span id="session-end-0">' + formatTime(segEnd) + '</span></div>' +
-      '<div id="session-stats-0" class="text-sm text-gray-500">' + cal.toFixed(1) + ' kcal · ' + (dist / 1000).toFixed(2) + ' km · ' + formatDurationLong(dur) + '</div>' +
-      '</div>';
-    innerEl.parentElement.insertAdjacentHTML('afterbegin', headerHtml);
-  } else {
-    if (statsEl) {
+    // Merge live segment totals into the first session's header.
+    const cal = (window._sessionClosedCal || 0) + (seg.moving ? seg.active_calories_kcal : 0);
+    const dist = (window._sessionClosedDist || 0) + (seg.moving ? seg.distance_m : 0);
+    const dur = (window._sessionClosedDur || 0) + (seg.moving ? seg.duration_s : 0);
+
+    let statsEl = document.getElementById('session-stats-0');
+    let endEl = document.getElementById('session-end-0');
+
+    // If no header exists yet (no closed segments), create one.
+    if (!statsEl) {
+      const segStartDate = new Date(seg.started_at);
+      const headerHtml = '<div class="flex items-center justify-between mb-4">' +
+        '<div class="text-sm text-gray-400">' + formatDate(segStartDate) + ' · ' + formatTime(segStartDate) + ' – <span id="session-end-0">' + formatTime(segEnd) + '</span></div>' +
+        '<div id="session-stats-0" class="text-sm text-gray-500">' + cal.toFixed(1) + ' kcal · ' + (dist / 1000).toFixed(2) + ' km · ' + formatDurationLong(dur) + '</div>' +
+        '</div>';
+      innerEl.parentElement.insertAdjacentHTML('afterbegin', headerHtml);
+    } else {
       statsEl.textContent = cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur);
+      if (endEl) endEl.textContent = formatTime(segEnd);
     }
-    if (endEl) {
-      endEl.textContent = formatTime(segEnd);
-    }
+  } else if (outerEl) {
+    // Non-adjacent: live segment is its own new session. Wrap it in a full
+    // session card so it matches closed-session styling. Totals reflect only
+    // the live segment (separate session from anything closed below it).
+    const segStartDate = new Date(seg.started_at);
+    const cal = seg.moving ? seg.active_calories_kcal : 0;
+    const dist = seg.moving ? seg.distance_m : 0;
+    const dur = seg.moving ? seg.duration_s : 0;
+    let html = '<div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mb-4">';
+    html += '<div class="flex items-center justify-between mb-4">';
+    html += '<div class="text-sm text-gray-400">' + formatDate(segStartDate) + ' · ' + formatTime(segStartDate) + ' – ' + formatTime(segEnd) + '</div>';
+    html += '<div class="text-sm text-gray-500">' + cal.toFixed(1) + ' kcal \u00b7 ' + (dist / 1000).toFixed(2) + ' km \u00b7 ' + formatDurationLong(dur) + '</div>';
+    html += '</div>';
+    html += renderSegmentCard(seg);
+    html += '</div>';
+    outerEl.innerHTML = html;
   }
 }
 
