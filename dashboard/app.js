@@ -302,7 +302,7 @@ function buildHeatmap(days) {
     }
 
     const tooltip = data
-      ? dateStr + ': ' + data.active_calories_kcal.toFixed(1) + ' active kcal (' + data.calories_kcal.toFixed(1) + ' total), ' + data.distance_km.toFixed(2) + ' km'
+      ? dateStr + ': ' + data.active_calories_kcal.toFixed(1) + ' active kcal, ' + data.distance_km.toFixed(2) + ' km'
       : dateStr + ': no activity';
 
     const isGold = data && data.distance_km >= goldThresholdKm;
@@ -519,7 +519,6 @@ function renderProfile(p) {
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
         <div class="text-3xl font-extrabold text-white">${p.totals.active_calories_kcal.toFixed(1)}</div>
         <div class="text-xs text-gray-500 mt-1">Active kcal</div>
-        <div class="text-xs text-gray-600">${p.totals.calories_kcal.toFixed(1)} total</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
         <div class="text-3xl font-extrabold text-white">${p.totals.distance_km.toFixed(2)}</div>
@@ -540,7 +539,6 @@ function renderProfile(p) {
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (active kcal)</div>
         <div class="text-2xl font-bold text-white">${p.records.best_day_active_calories_kcal.toFixed(1)}</div>
-        <div class="text-xs text-gray-600">${p.records.best_day_calories_kcal.toFixed(1)} total</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (km)</div>
