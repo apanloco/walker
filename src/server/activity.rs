@@ -34,17 +34,22 @@ async fn get_closed_segments(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     match db::get_user(pool, caller).await {
+        Ok(Some(_)) => {}
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(e) => {
             tracing::error!(error = %e, "get_user failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        Ok(Some(_)) => {}
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
         return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
+
+    // Activity is private — only the user themselves can view it.
+    if caller != id {
+        return StatusCode::FORBIDDEN.into_response();
+    }
 
     // Parse date or default to today. Validate format to prevent SQL injection.
     let date_filter = match &query.date {
@@ -108,17 +113,21 @@ async fn get_current_segment(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     match db::get_user(pool, caller).await {
+        Ok(Some(_)) => {}
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(e) => {
             tracing::error!(error = %e, "get_user failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        Ok(Some(_)) => {}
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
         return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
+
+    if caller != id {
+        return StatusCode::FORBIDDEN.into_response();
+    }
 
     let row = sqlx::query(
         "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,

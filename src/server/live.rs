@@ -140,17 +140,22 @@ async fn ws_live_user(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     match db::get_user(&ctx.db_pool, caller).await {
+        Ok(Some(_)) => {}
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(e) => {
             tracing::error!(error = %e, "get_user failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        Ok(Some(_)) => {}
     }
 
     let Ok(user_id) = uuid::Uuid::parse_str(&id_str) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
+
+    if caller != user_id {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| handle_ws_live_user(socket, ctx, user_id))
         .into_response()
 }
