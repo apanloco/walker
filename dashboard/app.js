@@ -466,8 +466,8 @@ function renderProfile(p) {
   const maxWeekCal = Math.max(...allDays.map(d => d.active_calories_kcal), 0.1);
   const weekBars = allDays.map(d => {
     const pct = d.active_calories_kcal > 0 ? Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3) : 0;
-    const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
     const isToday = d.date === todayStr;
+    const dayName = isToday ? 'Today' : new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
     const isLive = isToday && p.live && p.live.status === 'walking';
     const isIdle = isToday && p.live && p.live.status === 'idle';
     const liveDot = isLive
