@@ -11,7 +11,7 @@ use crate::device::{ProfileRegistry, TreadmillProfile};
 pub fn check_bluetooth_permission() -> anyhow::Result<()> {
     // Call [CBManager authorization] via Objective-C runtime FFI.
     // Returns: 0=notDetermined, 1=restricted, 2=denied, 3=allowed
-    extern "C" {
+    unsafe extern "C" {
         fn objc_getClass(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
         fn sel_registerName(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
         fn objc_msgSend(receiver: *const std::ffi::c_void, sel: *const std::ffi::c_void) -> isize;
