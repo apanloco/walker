@@ -363,7 +363,8 @@ function buildHeatmap(days) {
 
       const hasActivity = data && data.active_calories_kcal > 0;
       const isDev = document.cookie.split(';').some(c => c.trim() === 'walker_dev=1');
-      const isClickable = currentProfileId && (hasActivity || isDev);
+      const isOwn = currentProfileId === loggedInId;
+      const isClickable = currentProfileId && isOwn && (hasActivity || isDev);
       const tag = isClickable ? 'a' : 'div';
       const href = isClickable ? ' href="/activity/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
       html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';

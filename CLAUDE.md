@@ -226,7 +226,7 @@ All timing constants in one place. Referenced throughout this doc.
 
 **`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + on each disconnect check interval. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
 
-**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). Pushes the open segment JSON on every heartbeat and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
+**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the open segment JSON on every heartbeat and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "duration_s": 120.5,
              "weight_kg": 70.0, "calories_kcal": 12.3, "active_calories_kcal": 8.5,
@@ -245,7 +245,7 @@ Returns `{"segment": null}` when the user has no open segment.
 
 **`GET /api/profile/{id}`** — full year history, records, period calories. **Requires login** (`walker_id` cookie).
 
-**`GET /api/activity/{id}?date=YYYY-MM-DD`** — segments for a given date (defaults to today). **Requires login** (`walker_id` cookie).
+**`GET /api/activity/{id}?date=YYYY-MM-DD`** — segments for a given date (defaults to today). **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user (weight is shown per segment, so activity is private).
 
 ### Dashboard
 
@@ -294,7 +294,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
 
-**Activity page** (login required):
+**Activity page** (login required, own-only — 403 for other users, no admin override):
 - Segments for a given date, grouped into sessions (gap > 60 min = separate session)
 - Supports `?date=YYYY-MM-DD` query param, defaults to today
 - Newest session first, newest segment first within each session
