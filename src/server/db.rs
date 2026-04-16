@@ -577,3 +577,45 @@ pub async fn leaderboard_weekly(pool: &PgPool) -> anyhow::Result<Vec<Leaderboard
 pub async fn leaderboard_all_time(pool: &PgPool) -> anyhow::Result<Vec<LeaderboardEntry>> {
     query_leaderboard(pool, "").await
 }
+
+pub struct DailyWinnerEntry {
+    pub date: String,
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub active_calories_kcal: f64,
+}
+
+pub async fn leaderboard_daily_winners(pool: &PgPool) -> anyhow::Result<Vec<DailyWinnerEntry>> {
+    let rows = sqlx::query(
+        "SELECT sub.date, sub.user_id, sub.name, sub.avatar_url, sub.active_kcal
+         FROM (
+           SELECT s.started_at::date::TEXT AS date, u.id AS user_id,
+                  u.display_name AS name, u.avatar_url,
+                  COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY s.started_at::date
+                    ORDER BY SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)) DESC
+                  ) AS rn
+           FROM segments s JOIN users u ON u.id = s.user_id
+           WHERE s.moving = true
+             AND s.started_at::date >= CURRENT_DATE - 6
+           GROUP BY s.started_at::date, u.id, u.display_name, u.avatar_url
+         ) sub
+         WHERE sub.rn = 1
+         ORDER BY sub.date DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| DailyWinnerEntry {
+            date: r.get("date"),
+            id: r.get("user_id"),
+            name: r.get("name"),
+            avatar_url: r.get("avatar_url"),
+            active_calories_kcal: r.get::<f32, _>("active_kcal") as f64,
+        })
+        .collect())
+}

@@ -16,7 +16,9 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 1. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
 2. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
-3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
+3. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
+4. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
+5. **Phase out total kcal** — The platform should show active kcal only. Remove total kcal from: leaderboard hover tooltip, profile stats, and any other UI surfaces. Active kcal is the meaningful number; total kcal includes resting metabolic rate which just adds noise. Server can keep computing both for API backwards compatibility, but the dashboard should stop exposing total.
 
 ## License
 
@@ -239,7 +241,8 @@ Returns `{"segment": null}` when the user has no open segment.
 {
   "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0}],
   "weekly": [...],
-  "all_time": [...]
+  "all_time": [...],
+  "daily_winners": [{"date": "2026-04-16", "id": "uuid", "name": "alice", "avatar_url": "...", "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0}, ...]
 }
 ```
 
@@ -282,6 +285,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 
 **Leaderboard tab** (default, public — no login required):
 - Today / This Week / All Time top 10
+- Daily Winners: 4th panel showing the top active-kcal user for each of the last 7 days. Today's entry updates live with walking status. Each row: day label, avatar, name (links to profile), active kcal.
 - Live status indicators (themed walking/idle dots with theme-appropriate animation)
 - Clickable names → profile page (redirects to leaderboard if not logged in)
 - Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications

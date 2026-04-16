@@ -33,6 +33,14 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
         }
     };
 
+    let daily_winners = match db::leaderboard_daily_winners(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(error = %e, "leaderboard_daily_winners query failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
     // Merge live status from open segments in DB.
     let live_statuses = match db::get_live_statuses(pool).await {
         Ok(v) => v,
@@ -66,10 +74,33 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
             .collect()
     };
 
+    let daily_winners_json: Vec<serde_json::Value> = daily_winners
+        .into_iter()
+        .map(|w| {
+            let (status, speed) = live_statuses
+                .get(&w.id)
+                .map(|(moving, spd)| {
+                    let s = if *moving { "walking" } else { "idle" };
+                    (s.to_string(), *spd)
+                })
+                .unwrap_or(("offline".to_string(), 0.0));
+            serde_json::json!({
+                "date": w.date,
+                "id": w.id,
+                "name": w.name,
+                "avatar_url": w.avatar_url,
+                "active_calories_kcal": w.active_calories_kcal,
+                "status": status,
+                "speed_kmh": speed,
+            })
+        })
+        .collect();
+
     axum::Json(serde_json::json!({
         "today": enrich(today),
         "weekly": enrich(weekly),
         "all_time": enrich(all_time),
+        "daily_winners": daily_winners_json,
     }))
     .into_response()
 }
