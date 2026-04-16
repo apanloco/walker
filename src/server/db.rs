@@ -536,6 +536,7 @@ pub struct LeaderboardEntry {
     pub avatar_url: Option<String>,
     pub calories_kcal: f64,
     pub active_calories_kcal: f64,
+    pub distance_km: f64,
 }
 
 async fn query_leaderboard(
@@ -545,7 +546,8 @@ async fn query_leaderboard(
     let sql = format!(
         "SELECT u.id, u.display_name AS name, u.avatar_url,
                 COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS total_kcal,
-                COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal
+                COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
+                (COALESCE(SUM(s.distance_m), 0) / 1000.0)::REAL AS distance_km
          FROM users u LEFT JOIN segments s ON u.id = s.user_id AND s.moving = true {date_filter}
          GROUP BY u.id, u.display_name, u.avatar_url
          HAVING COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0) > 0
@@ -562,6 +564,7 @@ async fn query_leaderboard(
             avatar_url: r.get("avatar_url"),
             calories_kcal: r.get::<f32, _>("total_kcal") as f64,
             active_calories_kcal: r.get::<f32, _>("active_kcal") as f64,
+            distance_km: r.get::<f32, _>("distance_km") as f64,
         })
         .collect())
 }
@@ -584,15 +587,17 @@ pub struct DailyWinnerEntry {
     pub name: String,
     pub avatar_url: Option<String>,
     pub active_calories_kcal: f64,
+    pub distance_km: f64,
 }
 
 pub async fn leaderboard_daily_winners(pool: &PgPool) -> anyhow::Result<Vec<DailyWinnerEntry>> {
     let rows = sqlx::query(
-        "SELECT sub.date, sub.user_id, sub.name, sub.avatar_url, sub.active_kcal
+        "SELECT sub.date, sub.user_id, sub.name, sub.avatar_url, sub.active_kcal, sub.distance_km
          FROM (
            SELECT s.started_at::date::TEXT AS date, u.id AS user_id,
                   u.display_name AS name, u.avatar_url,
                   COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
+                  (COALESCE(SUM(s.distance_m), 0) / 1000.0)::REAL AS distance_km,
                   ROW_NUMBER() OVER (
                     PARTITION BY s.started_at::date
                     ORDER BY SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)) DESC
@@ -616,6 +621,7 @@ pub async fn leaderboard_daily_winners(pool: &PgPool) -> anyhow::Result<Vec<Dail
             name: r.get("name"),
             avatar_url: r.get("avatar_url"),
             active_calories_kcal: r.get::<f32, _>("active_kcal") as f64,
+            distance_km: r.get::<f32, _>("distance_km") as f64,
         })
         .collect())
 }
