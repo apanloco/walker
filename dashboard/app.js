@@ -208,6 +208,36 @@ function renderLeaderboard(elementId, entries) {
   `).join('');
 }
 
+function renderDailyWinners(entries) {
+  const el = document.getElementById('lb-daily-winners');
+  if (!entries || entries.length === 0) {
+    el.innerHTML = '<div class="text-gray-600 text-sm italic">No data yet</div>';
+    return;
+  }
+  const now = new Date();
+  const todayStr = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  el.innerHTML = entries.map((e, i) => {
+    const isToday = e.date === todayStr;
+    const d = new Date(e.date + 'T00:00:00Z');
+    const dayLabel = isToday ? 'Today' : days[d.getUTCDay()];
+    const status = isToday ? statusIndicator(e) : '';
+    return `
+      <div class="flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
+        <div class="w-10 text-xs text-gray-500 shrink-0">${dayLabel}</div>
+        ${e.avatar_url
+          ? '<img class="w-6 h-6 rounded-full ring-2 ring-gray-700 shrink-0" src="' + esc(e.avatar_url) + '" alt="">'
+          : '<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 shrink-0">' + esc(e.name[0].toUpperCase()) + '</div>'
+        }
+        <div class="flex-1 min-w-0">
+          <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${esc(e.name)}</a>
+          <div class="flex items-center gap-1 mt-0.5">${status}</div>
+        </div>
+        <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
+      </div>`;
+  }).join('');
+}
+
 function fetchLeaderboard() {
   fetch('/api/leaderboard')
     .then(r => {
@@ -218,6 +248,7 @@ function fetchLeaderboard() {
       renderLeaderboard('lb-today', data.today);
       renderLeaderboard('lb-weekly', data.weekly);
       renderLeaderboard('lb-alltime', data.all_time);
+      renderDailyWinners(data.daily_winners);
       if (window.twemoji) twemoji.parse(document.getElementById('page-leaderboard'));
     })
     .catch(e => console.error('Failed to fetch leaderboard:', e));
