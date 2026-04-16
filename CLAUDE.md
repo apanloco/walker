@@ -284,7 +284,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 **Navigation:** Logo + tabs (Leaderboard, Activity) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). Activity tab only visible when logged in. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
 
 **Leaderboard tab** (default, public — no login required):
-- Today / This Week / All Time top 10
+- Today / Last 7 Days / All Time top 10
 - Daily Winners: 4th panel showing the top active-kcal user for each of the last 7 days. Today's entry updates live with walking status. Each row: day label, avatar, name (links to profile), active kcal.
 - Live status indicators (themed walking/idle dots with theme-appropriate animation)
 - Clickable names → profile page (redirects to leaderboard if not logged in)
