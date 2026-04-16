@@ -6,6 +6,10 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function fmtNum(n, decimals) {
+  return n.toLocaleString('en', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
 // -- Page initialization (determined by URL, no client-side routing) --
 
 function initPage() {
@@ -201,8 +205,7 @@ function renderLeaderboard(elementId, entries) {
       </div>
       <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
       <div class="absolute right-0 top-full hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">
-        <div>${e.active_calories_kcal.toFixed(1)} active kcal</div>
-        <div class="mt-1">${e.calories_kcal.toFixed(1)} total kcal</div>
+        ${fmtNum(e.distance_km, 2)} km
       </div>
     </div>
   `).join('');
@@ -223,7 +226,7 @@ function renderDailyWinners(entries) {
     const dayLabel = isToday ? 'Today' : days[d.getUTCDay()];
     const status = isToday ? statusIndicator(e) : '';
     return `
-      <div class="flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
+      <div class="relative group flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
         <div class="w-10 text-xs text-gray-500 shrink-0">${dayLabel}</div>
         ${e.avatar_url
           ? '<img class="w-6 h-6 rounded-full ring-2 ring-gray-700 shrink-0" src="' + esc(e.avatar_url) + '" alt="">'
@@ -234,6 +237,9 @@ function renderDailyWinners(entries) {
           <div class="flex items-center gap-1 mt-0.5">${status}</div>
         </div>
         <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
+        <div class="absolute right-0 top-full hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">
+          ${fmtNum(e.distance_km, 2)} km
+        </div>
       </div>`;
   }).join('');
 }
@@ -548,11 +554,11 @@ function renderProfile(p) {
     <!-- Stats grid -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
-        <div class="text-3xl font-extrabold text-white">${p.totals.active_calories_kcal.toFixed(1)}</div>
+        <div class="text-3xl font-extrabold text-white">${fmtNum(p.totals.active_calories_kcal, 1)}</div>
         <div class="text-xs text-gray-500 mt-1">Active kcal</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
-        <div class="text-3xl font-extrabold text-white">${p.totals.distance_km.toFixed(2)}</div>
+        <div class="text-3xl font-extrabold text-white">${fmtNum(p.totals.distance_km, 2)}</div>
         <div class="text-xs text-gray-500 mt-1">Total km</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-gray-800">
@@ -569,11 +575,11 @@ function renderProfile(p) {
     <div class="grid grid-cols-3 gap-3 mb-8">
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (active kcal)</div>
-        <div class="text-2xl font-bold text-white">${p.records.best_day_active_calories_kcal.toFixed(1)}</div>
+        <div class="text-2xl font-bold text-white">${fmtNum(p.records.best_day_active_calories_kcal, 1)}</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (km)</div>
-        <div class="text-2xl font-bold text-white">${p.records.best_day_distance_km.toFixed(2)}</div>
+        <div class="text-2xl font-bold text-white">${fmtNum(p.records.best_day_distance_km, 2)}</div>
       </div>
       <div class="bg-surface-800 rounded-xl p-4 border border-amber-900/30">
         <div class="text-amber-400 text-[10px] font-semibold uppercase tracking-wider mb-1">&#127942; Best Day (time)</div>
@@ -840,7 +846,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-400" style="grid-column:2">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
     html += '<span class="text-white font-medium" style="grid-column:3">' + formatDurationLong(dur) + '</span>';
     html += '<span class="text-gray-300" style="grid-column:4">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
-    html += '<span class="text-gray-300" style="grid-column:5">' + seg.active_calories_kcal.toFixed(1) + ' <span class="text-gray-600">/ ' + seg.calories_kcal.toFixed(1) + '</span> kcal</span>';
+    html += '<span class="text-gray-300" style="grid-column:5">' + seg.active_calories_kcal.toFixed(1) + ' kcal</span>';
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(2) + '</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
