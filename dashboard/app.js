@@ -10,6 +10,15 @@ function fmtNum(n, decimals) {
   return n.toLocaleString('en', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function dayLabel(dateStr, todayStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const name = SHORT_DAYS[d.getUTCDay()];
+  if (dateStr === todayStr) return '<span class="text-walker-500 font-bold underline">' + name + '</span>';
+  return name;
+}
+
 // -- Page initialization (determined by URL, no client-side routing) --
 
 function initPage() {
@@ -219,15 +228,13 @@ function renderDailyWinners(entries) {
   }
   const now = new Date();
   const todayStr = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   el.innerHTML = entries.map((e, i) => {
     const isToday = e.date === todayStr;
-    const d = new Date(e.date + 'T00:00:00Z');
-    const dayLabel = isToday ? 'Today' : days[d.getUTCDay()];
+    const day = dayLabel(e.date, todayStr);
     const status = isToday ? statusIndicator(e) : '';
     return `
       <div class="relative group flex items-center gap-3 py-2 ${i > 0 ? 'border-t border-gray-800/50' : ''}">
-        <div class="w-10 text-xs text-gray-500 shrink-0">${dayLabel}</div>
+        <div class="w-10 text-xs text-gray-500 shrink-0">${day}</div>
         ${e.avatar_url
           ? '<img class="w-6 h-6 rounded-full ring-2 ring-gray-700 shrink-0" src="' + esc(e.avatar_url) + '" alt="">'
           : '<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 shrink-0">' + esc(e.name[0].toUpperCase()) + '</div>'
@@ -505,7 +512,7 @@ function renderProfile(p) {
   const weekBars = allDays.map(d => {
     const pct = d.active_calories_kcal > 0 ? Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3) : 0;
     const isToday = d.date === todayStr;
-    const dayName = isToday ? 'Today' : new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
+    const dayName = dayLabel(d.date, todayStr);
     const isLive = isToday && p.live && p.live.status === 'walking';
     const isIdle = isToday && p.live && p.live.status === 'idle';
     const liveDot = isLive
