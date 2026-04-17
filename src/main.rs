@@ -16,6 +16,37 @@ mod reporter;
 mod server;
 
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
+
+/// Writer that rewrites every `\n` to `\r\n` before passing it to stdout. We
+/// install this on `tracing_subscriber` so log lines render correctly while
+/// `walker walk` has the terminal in raw mode (where bare `\n` moves down a
+/// row without returning to column 0). In cooked mode the extra `\r` is a
+/// harmless no-op — the cursor is already at column 0.
+struct CrlfStdout;
+
+impl Write for CrlfStdout {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        let mut start = 0;
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'\n' {
+                out.write_all(&buf[start..i])?;
+                out.write_all(b"\r\n")?;
+                start = i + 1;
+            }
+        }
+        if start < buf.len() {
+            out.write_all(&buf[start..])?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
+}
 
 #[cfg(feature = "client")]
 use tracing::info;
@@ -44,6 +75,13 @@ enum Command {
         #[arg(short, long, default_value = "10")]
         timeout: u64,
     },
+    /// Connect to a treadmill and dump its FTMS capabilities (read-only)
+    #[cfg(feature = "client")]
+    Probe {
+        /// Scan duration in seconds when searching for the device
+        #[arg(short, long, default_value = "10")]
+        timeout: u64,
+    },
     /// Connect to a walking machine and dump all data
     #[cfg(feature = "client")]
     Walk {
@@ -56,6 +94,11 @@ enum Command {
         /// Run without server connection (data not reported)
         #[arg(long)]
         offline: bool,
+        /// After connecting, send a start command so the belt begins moving
+        /// without pressing Play on the remote. Only safe when you are ready
+        /// to walk — the belt will start moving at the treadmill's default speed.
+        #[arg(long)]
+        start: bool,
     },
     /// Simulate a treadmill (no BLE needed)
     #[cfg(feature = "client")]
@@ -135,21 +178,25 @@ async fn main() -> anyhow::Result<()> {
         .as_deref()
         .map(|v| format!("walker={v}"))
         .or_else(|| std::env::var("RUST_LOG").ok())
-        .unwrap_or_else(|| "info".to_string());
+        .unwrap_or_else(|| "warn".to_string());
 
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(&log_filter))
+        .with_writer(|| CrlfStdout)
         .init();
 
     match cli.command {
         #[cfg(feature = "client")]
         Command::Enumerate { timeout } => enumerate(timeout).await?,
         #[cfg(feature = "client")]
+        Command::Probe { timeout } => probe(timeout).await?,
+        #[cfg(feature = "client")]
         Command::Walk {
             timeout,
             dev,
             offline,
-        } => walk(timeout, dev, offline).await?,
+            start,
+        } => walk(timeout, dev, offline, start).await?,
         #[cfg(feature = "client")]
         Command::Simulate { speed, count, dev } => simulate(speed, count, dev).await?,
         #[cfg(feature = "client")]
@@ -268,11 +315,145 @@ async fn enumerate(timeout: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "client")]
-async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
+async fn probe(timeout: u64) -> anyhow::Result<()> {
     use btleplug::api::Peripheral;
     use colored::Colorize;
+    use device::{
+        FTMS_MACHINE_FEATURE_UUID, FTMS_SUPPORTED_INCLINATION_RANGE_UUID,
+        FTMS_SUPPORTED_SPEED_RANGE_UUID, default_registry,
+    };
+
+    let registry = default_registry();
+    let adapter = ble::get_adapter().await?;
+
+    let (device, profile) = match ble::find_treadmill(&adapter, timeout, &registry).await? {
+        Some(found) => found,
+        None => {
+            info!("No treadmill found");
+            return Ok(());
+        }
+    };
+
+    let props = device.properties().await.ok().flatten().unwrap_or_default();
+    let device_name = props.local_name.clone();
+    info!(name = %device_name.as_deref().unwrap_or("Unknown"), "Found, connecting...");
+    device.connect().await?;
+    device.discover_services().await?;
+
+    println!();
+    println!(
+        "  {} {}",
+        "Device:".bold(),
+        profile
+            .full_name(device_name.as_deref())
+            .green()
+            .bold()
+    );
+    println!();
+
+    // Speed range: min, max, min_increment — each u16 LE in 0.01 km/h units.
+    if let Some(bytes) = read_char(&device, FTMS_SUPPORTED_SPEED_RANGE_UUID).await {
+        if bytes.len() >= 6 {
+            let min = u16::from_le_bytes([bytes[0], bytes[1]]) as f32 * 0.01;
+            let max = u16::from_le_bytes([bytes[2], bytes[3]]) as f32 * 0.01;
+            let inc = u16::from_le_bytes([bytes[4], bytes[5]]) as f32 * 0.01;
+            println!(
+                "  Speed range:     {min:.2} – {max:.2} km/h  (min step: {inc:.2})"
+            );
+        } else {
+            println!("  Speed range:     <{} bytes> {}", bytes.len(), hex(&bytes));
+        }
+    } else {
+        println!("  Speed range:     (not available)");
+    }
+
+    // Inclination range: min, max (i16 LE in 0.1%), min_increment (u16 LE in 0.1%).
+    if let Some(bytes) = read_char(&device, FTMS_SUPPORTED_INCLINATION_RANGE_UUID).await {
+        if bytes.len() >= 6 {
+            let min = i16::from_le_bytes([bytes[0], bytes[1]]) as f32 * 0.1;
+            let max = i16::from_le_bytes([bytes[2], bytes[3]]) as f32 * 0.1;
+            let inc = u16::from_le_bytes([bytes[4], bytes[5]]) as f32 * 0.1;
+            println!(
+                "  Incline range:   {min:.1} – {max:.1} %     (min step: {inc:.1})"
+            );
+        } else {
+            println!("  Incline range:   <{} bytes> {}", bytes.len(), hex(&bytes));
+        }
+    } else {
+        println!("  Incline range:   (not available)");
+    }
+
+    if let Some(bytes) = read_char(&device, FTMS_MACHINE_FEATURE_UUID).await {
+        println!("  Machine feature: {}", hex(&bytes));
+    }
+
+    println!();
+    let _ = device.disconnect().await;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+async fn read_char(
+    device: &btleplug::platform::Peripheral,
+    uuid: uuid::Uuid,
+) -> Option<Vec<u8>> {
+    use btleplug::api::Peripheral;
+    let services = device.services();
+    let ch = services
+        .iter()
+        .flat_map(|s| &s.characteristics)
+        .find(|c| c.uuid == uuid)?;
+    device.read(ch).await.ok()
+}
+
+#[cfg(feature = "client")]
+fn hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// RAII guard that puts the terminal in raw mode so we can capture arrow keys
+/// without line buffering, and restores cooked mode on drop (including panics).
+#[cfg(feature = "client")]
+struct RawModeGuard;
+
+#[cfg(feature = "client")]
+impl RawModeGuard {
+    fn enable() -> anyhow::Result<Self> {
+        crossterm::terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+#[cfg(feature = "client")]
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+/// Why the inner walk loop exited.
+#[cfg(feature = "client")]
+enum WalkExit {
+    /// BLE stream ended (device closed the connection).
+    StreamEnded,
+    /// No data received for the disconnect timeout.
+    Timeout,
+    /// User pressed Ctrl+C or 'q' — return all the way out.
+    UserQuit,
+}
+
+#[cfg(feature = "client")]
+async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Result<()> {
+    use btleplug::api::Peripheral;
+    use colored::Colorize;
+    use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
     use futures::stream::StreamExt;
-    use tracing::error;
+    use std::time::Duration;
+    use tracing::{error, warn};
 
     use activity::ActivityTracker;
     use device::{StepTracker, TreadmillEvent, TreadmillStatus, default_registry};
@@ -323,10 +504,10 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
         };
 
         let props = device.properties().await.ok().flatten().unwrap_or_default();
-        let name = props.local_name.as_deref().unwrap_or("Unknown");
+        let device_name = props.local_name.clone();
         let address = props.address;
         info!(
-            name = %name,
+            name = %device_name.as_deref().unwrap_or("Unknown"),
             address = %address,
             profile = profile.name(),
             "Found walking machine, connecting..."
@@ -337,7 +518,6 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             continue;
         }
-        info!("Connected!");
 
         // Set up the connection: discover services, subscribe, activate.
         // If any step fails, disconnect and retry from scanning.
@@ -360,6 +540,12 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
 
             ble::subscribe_notify(&device, profile.notify_uuids()).await?;
             profile.activate(&device).await?;
+            if start {
+                match profile.start(&device).await {
+                    Ok(()) => info!("Sent start command"),
+                    Err(e) => warn!(error = %e, "Failed to send start command"),
+                }
+            }
             Ok(device.notifications().await?)
         }
         .await;
@@ -374,109 +560,215 @@ async fn walk(timeout: u64, dev: bool, offline: bool) -> anyhow::Result<()> {
             }
         };
 
-        info!("{}", "Listening for data — press Ctrl+C to stop".green());
-        if lines_since_header == 0 {
-            println!();
-        }
-
-        loop {
-            let notification =
-                match tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await
-                {
-                    Ok(Some(n)) => n,
-                    Ok(None) => break,
-                    Err(_) => {
-                        info!(
-                            "{}",
-                            "No data for 10 seconds — assuming disconnected".yellow()
-                        );
-                        break;
-                    }
-                };
-            tracing::trace!(
-                bytes = notification.value.len(),
-                uuid = %notification.uuid,
-                "BLE notification received",
+        // --- Connection banner ---
+        let caps = profile.capabilities(device_name.as_deref());
+        println!();
+        println!(
+            "  {} {}",
+            "Connected to device:".bold(),
+            profile.full_name(device_name.as_deref()).green().bold()
+        );
+        if caps.speed_control {
+            let (min, max) = caps.speed_range_kmh;
+            println!(
+                "  Press {} / {} to change speed by 0.1 km/h ({min:.1}–{max:.1} km/h) — Ctrl+C or 'q' to stop",
+                "↑".bold(),
+                "↓".bold(),
             );
+        } else {
+            println!("  {}", "Listening for data — press Ctrl+C to stop".green());
+        }
+        println!();
 
-            match profile.parse_notification(&notification.uuid, &notification.value) {
-                Some(TreadmillEvent::Data(data)) => {
-                    last_status_only = None;
-                    // Pausing/Paused = belt stopping. Reset everything.
-                    if matches!(
-                        data.status,
-                        TreadmillStatus::Pausing | TreadmillStatus::Paused
-                    ) {
-                        step_tracker.reset();
-                        activity_tracker.reset();
-                        let activity = activity_tracker.state();
-                        let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
-                        if last_display.as_ref() != Some(&key) {
-                            if lines_since_header.is_multiple_of(20) {
-                                display::print_walk_header();
+        // Enter raw mode only if we need to capture keys. This swallows Ctrl+C
+        // (it comes through as a KeyEvent we handle explicitly).
+        let _raw_guard = if caps.speed_control {
+            Some(RawModeGuard::enable()?)
+        } else {
+            None
+        };
+        let mut key_stream = EventStream::new();
+
+        // Target speed the CLI tracks. Starts at 1.0 km/h as a safe fallback;
+        // the data-stream sync below snaps it to the real belt-target on the
+        // first Running packet and keeps it aligned whenever the user uses
+        // the remote. The treadmill reports its *target* speed (not the
+        // physical belt speed mid-ramp), so mirroring is immediate — except
+        // for a short grace window after we issue a write, during which a
+        // stale (pre-write) data packet can still arrive and would otherwise
+        // undo our freshly-set target.
+        let initial_target = 1.0_f32.clamp(caps.speed_range_kmh.0, caps.speed_range_kmh.1);
+        let mut target_speed_kmh: f32 = initial_target;
+        let mut last_set_speed_at: Option<std::time::Instant> = None;
+        const SET_SPEED_GRACE: Duration = Duration::from_millis(750);
+
+        let mut timeout_fut = Box::pin(tokio::time::sleep(Duration::from_secs(10)));
+
+        let exit = loop {
+            tokio::select! {
+                notif = stream.next() => {
+                    timeout_fut.as_mut().reset(
+                        tokio::time::Instant::now() + Duration::from_secs(10),
+                    );
+                    let Some(notification) = notif else { break WalkExit::StreamEnded; };
+                    tracing::trace!(
+                        bytes = notification.value.len(),
+                        uuid = %notification.uuid,
+                        "BLE notification received",
+                    );
+
+                    match profile.parse_notification(&notification.uuid, &notification.value) {
+                        Some(TreadmillEvent::Data(data)) => {
+                            last_status_only = None;
+                            // Mirror the device's reported target speed, except
+                            // during a short grace window right after a write —
+                            // the treadmill takes ~300ms to reflect the new
+                            // target, so a stale packet could otherwise revert
+                            // our target before the up-to-date one arrives.
+                            if caps.speed_control
+                                && data.status == TreadmillStatus::Running
+                                && data.speed_kmh > 0.0
+                            {
+                                let in_grace = last_set_speed_at
+                                    .map(|t| t.elapsed() < SET_SPEED_GRACE)
+                                    .unwrap_or(false);
+                                if !in_grace {
+                                    target_speed_kmh = data
+                                        .speed_kmh
+                                        .clamp(caps.speed_range_kmh.0, caps.speed_range_kmh.1);
+                                }
                             }
-                            display::print_data_row(&data, &activity);
-                            lines_since_header += 1;
-                            last_display = Some(key);
+                            // Pausing/Paused = belt stopping. Reset everything.
+                            if matches!(
+                                data.status,
+                                TreadmillStatus::Pausing | TreadmillStatus::Paused
+                            ) {
+                                step_tracker.reset();
+                                activity_tracker.reset();
+                                target_speed_kmh = initial_target;
+                                let activity = activity_tracker.state();
+                                let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
+                                if last_display.as_ref() != Some(&key) {
+                                    if lines_since_header.is_multiple_of(20) {
+                                        display::print_walk_header();
+                                    }
+                                    display::print_data_row(&data, &activity);
+                                    lines_since_header += 1;
+                                    last_display = Some(key);
+                                }
+                                if let Some(ref mut rpt) = server_reporter {
+                                    rpt.send_stopped();
+                                }
+                                continue;
+                            }
+                            let step_change = data.steps.map(|raw| step_tracker.update(raw))
+                                .unwrap_or(device::StepChange::Baseline);
+                            let treadmill_running = data.status == TreadmillStatus::Running;
+                            let activity =
+                                activity_tracker.update(step_change, treadmill_running, data.speed_kmh);
+                            let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
+                            if last_display.as_ref() != Some(&key) {
+                                if lines_since_header.is_multiple_of(20) {
+                                    display::print_walk_header();
+                                }
+                                display::print_data_row(&data, &activity);
+                                lines_since_header += 1;
+                                last_display = Some(key);
+                            }
+                            if let Some(ref mut rpt) = server_reporter {
+                                rpt.maybe_send(&activity, data.speed_kmh);
+                            }
                         }
-                        if let Some(ref mut rpt) = server_reporter {
-                            rpt.send_stopped();
+                        Some(TreadmillEvent::StatusOnly(status)) => {
+                            last_display = None;
+                            if let Some(ref mut rpt) = server_reporter {
+                                rpt.send_stopped();
+                            }
+                            if matches!(status, TreadmillStatus::Standby | TreadmillStatus::Off) {
+                                step_tracker.reset();
+                                activity_tracker.reset();
+                                target_speed_kmh = initial_target;
+                            }
+                            if last_status_only.as_ref() != Some(&status) {
+                                display::print_status_row(&status, &notification.value);
+                                last_status_only = Some(status);
+                            }
                         }
-                        continue;
-                    }
-                    let step_change = data.steps.map(|raw| step_tracker.update(raw))
-                        .unwrap_or(device::StepChange::Baseline);
-                    let treadmill_running = data.status == TreadmillStatus::Running;
-                    let activity =
-                        activity_tracker.update(step_change, treadmill_running, data.speed_kmh);
-                    let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
-                    if last_display.as_ref() != Some(&key) {
-                        if lines_since_header.is_multiple_of(20) {
-                            display::print_walk_header();
+                        Some(TreadmillEvent::CommandAck) => {
+                            // Pure ack echo from a prior control write. Swallow.
                         }
-                        display::print_data_row(&data, &activity);
-                        lines_since_header += 1;
-                        last_display = Some(key);
-                    }
-                    if let Some(ref mut rpt) = server_reporter {
-                        rpt.maybe_send(&activity, data.speed_kmh);
+                        Some(TreadmillEvent::Unknown { data, .. }) => {
+                            display::print_unknown_row("UREVO ???", &data);
+                        }
+                        None => {
+                            display::print_other_notification(&notification.uuid, &notification.value);
+                        }
                     }
                 }
-                Some(TreadmillEvent::StatusOnly(status)) => {
-                    last_display = None;
-                    // All non-Running statuses send stopped to close the segment.
-                    if let Some(ref mut rpt) = server_reporter {
-                        rpt.send_stopped();
-                    }
-                    // Standby/Off = session ended, step counter will reset to 0.
-                    // Reset trackers so the jump isn't mistaken for activity.
-                    if matches!(status, TreadmillStatus::Standby | TreadmillStatus::Off) {
-                        step_tracker.reset();
-                        activity_tracker.reset();
-                    }
-                    if last_status_only.as_ref() != Some(&status) {
-                        display::print_status_row(&status, &notification.value);
-                        last_status_only = Some(status);
-                    }
+
+                _ = &mut timeout_fut => {
+                    break WalkExit::Timeout;
                 }
-                Some(TreadmillEvent::Unknown { data, .. }) => {
-                    display::print_unknown_row("UREVO ???", &data);
-                }
-                None => {
-                    display::print_other_notification(&notification.uuid, &notification.value);
+
+                Some(Ok(Event::Key(ke))) = key_stream.next(), if caps.speed_control => {
+                    match (ke.code, ke.modifiers) {
+                        (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
+                            break WalkExit::UserQuit;
+                        }
+                        (KeyCode::Char('q'), _) => {
+                            break WalkExit::UserQuit;
+                        }
+                        (KeyCode::Up, _) | (KeyCode::Down, _) => {
+                            let step = if matches!(ke.code, KeyCode::Up) { 0.1 } else { -0.1 };
+                            let (min, max) = caps.speed_range_kmh;
+                            let new_target = (target_speed_kmh + step).clamp(min, max);
+                            // Already at the boundary — skip write (no point
+                            // beeping the treadmill) and the redundant print.
+                            if new_target != target_speed_kmh {
+                                target_speed_kmh = new_target;
+                                display::print_target_speed(target_speed_kmh);
+                                last_set_speed_at = Some(std::time::Instant::now());
+                                if let Err(e) = profile.set_speed(&device, target_speed_kmh).await {
+                                    warn!(error = %e, "Failed to set target speed");
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
+        };
+
+        // Restore cooked mode before any further println/info output.
+        drop(_raw_guard);
+
+        // Immediate feedback on user-initiated quit — disconnect can take a
+        // second, and without this the terminal looks frozen (tempting a second
+        // Ctrl+C that would SIGINT the process mid-cleanup).
+        if matches!(exit, WalkExit::UserQuit) {
+            println!("  Disconnecting…");
         }
 
-        // Stream ended — device disconnected.
+        step_tracker.reset();
+        activity_tracker.reset();
+        let _ = device.disconnect().await;
+
+        match exit {
+            WalkExit::UserQuit => return Ok(()),
+            WalkExit::Timeout => {
+                info!(
+                    "{}",
+                    "No data for 10 seconds — assuming disconnected".yellow()
+                );
+            }
+            WalkExit::StreamEnded => {}
+        }
+
         info!(
             "{}",
             "Device disconnected. Reconnecting in 3 seconds...".yellow()
         );
-        step_tracker.reset();
-        activity_tracker.reset();
-        let _ = device.disconnect().await;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
 

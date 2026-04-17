@@ -213,7 +213,6 @@ All timing constants in one place. Referenced throughout this doc.
 | Client idle detection | 3s (≥2 km/h), 5s (<2 km/h) | activity.rs | Speed-dependent: no step change → IDLE |
 | BLE silent disconnect | 10s | ble.rs | Detect treadmill that stopped sending data |
 | BLE reconnect retry | 3s | ble.rs | Delay before scanning again after disconnect |
-| BLE quick scan | 1s | ble.rs | Fast scan before falling back to full scan |
 | Server disconnect check interval | 5s | live.rs | How often the server checks for stale heartbeats |
 | Server disconnect threshold | 30s | live.rs | No heartbeat for this long → close segment |
 | Crash recovery threshold | 60s | mod.rs | On startup, close segments stale longer than this |
@@ -281,7 +280,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 
 **Page code (`app.js`) is theme-unaware.** It uses semantic Tailwind classes (`bg-walker-500`, `bg-heat-3`, `bg-status-walking`) that resolve to different colors per theme via CSS variables. No theme conditionals in page rendering code.
 
-**Navigation:** Logo + tabs (Leaderboard, Activity) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). Activity tab only visible when logged in. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
+**Navigation:** Logo + tabs (Leaderboard, Activity, FAQ) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). Activity tab only visible when logged in; Leaderboard and FAQ are public. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
 
 **Leaderboard tab** (default, public — no login required):
 - Today / Last 7 Days / All Time top 10
@@ -297,6 +296,12 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Stats grid: total kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
+
+**FAQ page** (public — no login required):
+- Static Q&A explaining how Walker works (active vs total kcal, MET, segments, steps, privacy, etc.)
+- Grouped into three sections: The Numbers / How Tracking Works / Platform
+- Uses native `<details>`/`<summary>` for expand/collapse — no JavaScript
+- Route: `/faq`. All content lives inline in `index.html`; theme-unaware (uses semantic Tailwind classes)
 
 **Activity page** (login required, own-only — 403 for other users, no admin override):
 - Segments for a given date, grouped into sessions (gap > 60 min = separate session)
@@ -354,14 +359,50 @@ Design: **steps detect, speed measures, server computes.**
 
 ## Supported Devices
 
-### UREVO SpaceWalk E1L (URTM041)
+All UREVO devices share the same proprietary data stream and control protocol (model matched by `URTM` name prefix). Per-model capabilities are declared in `capabilities_for()` in `src/device/urevo.rs` — add new URTM models there.
 
-- **BLE Name:** `URTM041` (matched by name prefix, not FTMS UUID — avoids claiming bikes/rowers)
-- **Proprietary Service (0xFFF0):** subscribe `0xFFF1` only, write `[0x02, 0x51, 0x0B, 0x03]` to `0xFFF2`
+| Model | BLE Name | Speed control | Incline control | Speed range |
+|-------|----------|---------------|-----------------|-------------|
+| UREVO SpaceWalk E1L | `URTM041` | ✓ | — | 1.0–6.0 km/h (verified via `walker probe`) |
+| UREVO CyberPad | `URTM051` | ✓ | ✓ (not wired in CLI yet) | 1.0–6.0 km/h (unverified — run `walker probe`) |
+
+### Proprietary data stream (all URTM models)
+
+- **Service `0xFFF0`:** subscribe to `0xFFF1`, write `[0x02, 0x51, 0x0B, 0x03]` to `0xFFF2` to activate streaming
 - **19-byte packets at ~3 Hz:** status, speed (0.1 km/h), duration, distance, calories, steps
 - **6-byte packets:** status only (off/standby/starting)
-- **Also advertises FTMS** (0x1826) and other services — we only subscribe to the proprietary characteristic
+- Matched by name prefix only — FTMS UUID alone would claim bikes/rowers too
 - Steps stop when you step off the belt; distance/calories keep ticking
+
+### Proprietary control commands (same channel the iOS app uses)
+
+Speed, start, and stop are written to the same `0xFFF2` characteristic that activates the data stream. Protocol reverse-engineered from PacketLogger captures of the UREVO iOS app against a URTM041 (raw `.pklg` files live in `captures/` for reference; `build_set_speed_cmd()` in `urevo.rs` encodes the speed frame):
+
+- **Frame:** `0x02 <cmd> [data…] <checksum> 0x03`
+- **Checksum:** `sum(cmd + data bytes) XOR 0x5A` — single byte, immediately before the `0x03` terminator
+- **Set Speed:** `02 53 02 <u16 LE in 0.1 km/h> <checksum> 03`. Example for 1.5 km/h: `02 53 02 0F 00 3E 03`.
+- **Start session:** requires a short handshake the iOS app performs — sending the start command alone is silently accepted but ignored. `UrevoProfile::start()` replays the app's exact sequence:
+  1. Write `02 50 03 09 03` (query — device responds; contents irrelevant, the exchange itself is what the treadmill's state machine needs to see).
+  2. Wait ~200ms.
+  3. Write `02 53 01 00 00 00 00 00 00 00 00 0E 03` (8 zero data bytes, presumed workout targets — time/distance/calories set to none).
+- **Stop:** `02 53 0A <checksum> 03`. Example: `02 53 0A 07 03`.
+- **Activation (stream start):** `02 51 0B 03` — the short 4-byte variant has no checksum; it appears to be a fixed bootstrap command.
+- **Command acknowledgements:** when the treadmill accepts a `02 53 …` control write, it echoes the frame back on the `0xFFF1` notification channel (identical bytes for speed writes; a 6-byte `02 53 01 03 0D 03`-style "success" frame for start). The parser recognizes these and surfaces them as `TreadmillEvent::CommandAck`, which the walk loop silently discards.
+
+All writes use `WriteType::WithoutResponse`. Values are clamped to the model's declared speed range before sending.
+
+**Why not FTMS?** UREVO devices expose the standard FTMS Control Point at `0x2AD9` and it accepts writes, but using it on the E1L has two compounding problems: (1) any FTMS write silences the proprietary `0xFFF1` notification stream until re-activated, and (2) re-activating too soon cancels the pending speed change. The only workable FTMS flow required a 1.5s delay, which added visible lag. The proprietary channel has neither issue — changes apply instantly, the stream keeps flowing. The iOS app uses this channel too, so it's clearly the intended path.
+
+### TreadmillProfile trait
+
+Profile impls live in `src/device/urevo.rs` (or a new file per brand). Each profile exposes:
+- `full_name(device_name)` — human-friendly model name for the startup banner
+- `capabilities(device_name)` — what controls are available for this specific BLE-advertised model
+- `set_speed(device, kmh)` — writes the proprietary speed command to `0xFFF2` (default impl: errors)
+- `start(device)` — sends the query + start handshake so `walker walk --start` can begin a session without the user reaching for the remote (default impl: errors)
+- `parse_notification(uuid, data)` — parses notification bytes into `TreadmillEvent`s (`Data`, `StatusOnly`, `CommandAck`, or `Unknown`)
+
+Capabilities are resolved at connect time from the BLE `local_name` so one profile can describe multiple sibling models.
 
 ## Authentication
 
@@ -453,11 +494,32 @@ walker logout --dev       # remove dev credentials
 walker enumerate          # scan for BLE treadmills (green = matched, grey = other)
 ```
 
+### `probe`
+```
+walker probe              # connect to the first matched treadmill and dump its FTMS capabilities
+```
+
+Read-only. Reports the device's advertised speed range, inclination range, and Machine Feature bitmask — useful when adding a new model's capabilities to `capabilities_for()`. Does not activate the data stream or issue any write.
+
 ### `walk`
 ```
 walker walk               # connect to treadmill, report to production server
 walker walk --dev         # report to local dev server
+walker walk --offline     # run without reporting (no login required)
+walker walk --start       # auto-start the belt after connect (safety: only use when ready to walk)
 ```
+
+On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM041)` followed by control hints for the model.
+
+**Speed control (when supported by the device).** On connect, if the profile's `capabilities().speed_control` is true, the terminal enters raw mode and captures arrow keys:
+- `↑` / `↓` adjust target speed by 0.1 km/h, clamped to the model's `speed_range_kmh`
+- `Ctrl+C` or `q` stops the command and restores cooked mode
+- **Target mirrors the device's reported speed on every Running data packet**, except for a short ~750 ms grace window after we issue a `set_speed` write (the treadmill takes ~300 ms to reflect the new target, so a stale in-flight data packet would otherwise undo our press). This covers the initial sync at session start AND any remote-induced changes mid-session. The one other exception is Pausing — the device reports a decreasing speed as the belt winds down, but we bail out of the sync path in that branch anyway.
+- Resets to 1.0 km/h on Pausing/Paused/Standby/Off so next session syncs fresh.
+
+Each press sends the proprietary speed command to `0xFFF2`. Speed changes are not reported to the server directly — the observed speed from the proprietary stream is what gets logged.
+
+When the profile has no speed control, raw mode is not entered and the command behaves as before.
 
 Auto-reconnects on disconnect. Keeps scanning if no treadmill found. macOS: checks Bluetooth permission before init (prevents CoreBluetooth segfault). See [Timeouts & Intervals](#timeouts--intervals) for BLE timing.
 
@@ -520,7 +582,7 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 
 - Auto-reconnect on disconnect (see [Timeouts & Intervals](#timeouts--intervals) for timing)
 - Keeps scanning if no treadmill found
-- Quick scan before full scan
+- Checks adapter's peripheral cache before scanning (instant hit on reconnects)
 - Step and activity trackers reset on Pausing/Paused/Standby/Off and on BLE reconnect
 - macOS: Bluetooth permission pre-check prevents CoreBluetooth segfault
 
@@ -533,8 +595,8 @@ Connect to a treadmill directly from the browser using the Web Bluetooth API, no
 
 **Requirements:** Chromium-only (no Firefox/Safari). HTTPS or localhost. User gesture required to trigger BLE scan. Requires reimplementing UREVO protocol parsing and StepChange/ActivityTracker state machine in JavaScript (duplication with Rust client). Tab must stay open — browser may throttle/disconnect BLE if the tab is backgrounded too long. Best as a "quick start" option alongside the CLI, not a full replacement.
 
-### BLE Device Control: Speed from CLI
-Write commands to the treadmill to increase/decrease speed from the command line during `walker walk`. Requires reverse-engineering the write commands for each device profile.
+### BLE Device Control: Incline from CLI
+Wire the URTM051 (CyberPad) incline capability to key bindings in `walker walk` (e.g. left/right arrows). The FTMS opcode is `0x03 <i16 LE in 0.1%>`. Note the CyberPad physically stops on incline change, so we'd need to auto-resume at the previous speed afterward (see `set_incline` in the reference Python script).
 
 ### Goals & Streaks on Leaderboard
 Daily/weekly calorie or distance targets. Streaks on the leaderboard (fire emoji next to names).

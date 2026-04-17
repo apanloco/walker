@@ -4,8 +4,44 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 /// FTMS (Fitness Machine Service) UUID — standard BLE service for treadmills.
-#[allow(dead_code)] // Will be used by future FTMS-based profiles.
+/// Not currently used; UREVO devices are controlled via their proprietary
+/// protocol on 0xFFF2, not via FTMS.
+#[allow(dead_code)]
 pub const FTMS_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_1826_0000_1000_8000_0080_5f9b_34fb);
+
+/// FTMS Machine Feature — bitmask of supported capabilities. Read-only.
+pub const FTMS_MACHINE_FEATURE_UUID: Uuid =
+    Uuid::from_u128(0x0000_2acc_0000_1000_8000_0080_5f9b_34fb);
+/// FTMS Supported Speed Range — 6 bytes: min, max, min_increment (each u16 LE, 0.01 km/h units).
+pub const FTMS_SUPPORTED_SPEED_RANGE_UUID: Uuid =
+    Uuid::from_u128(0x0000_2ad4_0000_1000_8000_0080_5f9b_34fb);
+/// FTMS Supported Inclination Range — 6 bytes: min, max (i16 LE, 0.1%), min_increment (u16 LE, 0.1%).
+pub const FTMS_SUPPORTED_INCLINATION_RANGE_UUID: Uuid =
+    Uuid::from_u128(0x0000_2ad5_0000_1000_8000_0080_5f9b_34fb);
+
+/// What a connected treadmill supports in terms of runtime control.
+/// Returned by `TreadmillProfile::capabilities()` after the device name is known,
+/// so the same profile can describe different models (e.g. URTM041 vs URTM051).
+#[derive(Debug, Clone, Copy)]
+pub struct TreadmillCapabilities {
+    pub speed_control: bool,
+    /// Declared in the capability table for future incline controls (e.g. URTM051).
+    /// Not yet consumed by the CLI.
+    #[allow(dead_code)]
+    pub incline_control: bool,
+    /// Min/max target speed in km/h. Used to clamp arrow-key adjustments.
+    pub speed_range_kmh: (f32, f32),
+}
+
+impl Default for TreadmillCapabilities {
+    fn default() -> Self {
+        Self {
+            speed_control: false,
+            incline_control: false,
+            speed_range_kmh: (0.0, 0.0),
+        }
+    }
+}
 
 // -- Common types --
 
@@ -56,6 +92,9 @@ pub enum TreadmillEvent {
     StatusOnly(TreadmillStatus),
     /// Full data update.
     Data(TreadmillData),
+    /// Treadmill echoing back a command we sent — pure acknowledgement, no
+    /// information beyond "I got your write". The walk loop ignores these.
+    CommandAck,
     /// Unrecognized packet from a profile-owned characteristic.
     Unknown {
         #[allow(dead_code)]
@@ -111,8 +150,20 @@ impl StepTracker {
 
 #[async_trait]
 pub trait TreadmillProfile: Send + Sync {
-    /// Human-readable name for this profile.
+    /// Short profile name (e.g. "UREVO").
     fn name(&self) -> &str;
+
+    /// Human-friendly model name for display (e.g. "UREVO SpaceWalk E1L").
+    /// Derived from the BLE local_name when known. Falls back to `name()`.
+    fn full_name(&self, _device_name: Option<&str>) -> String {
+        self.name().to_string()
+    }
+
+    /// What runtime control this specific device supports.
+    /// Takes the BLE local_name so one profile can describe multiple models.
+    fn capabilities(&self, _device_name: Option<&str>) -> TreadmillCapabilities {
+        TreadmillCapabilities::default()
+    }
 
     /// Check if this profile matches a discovered device.
     fn matches(&self, device_name: Option<&str>, service_uuids: &[Uuid]) -> bool;
@@ -121,8 +172,25 @@ pub trait TreadmillProfile: Send + Sync {
     fn notify_uuids(&self) -> &[Uuid];
 
     /// After connection + service discovery, perform profile-specific activation
-    /// (e.g., write commands to start a proprietary data stream).
+    /// (e.g., write commands to start a proprietary data stream, request FTMS control).
     async fn activate(&self, device: &btleplug::platform::Peripheral) -> anyhow::Result<()>;
+
+    /// Send a target-speed command to the treadmill. Default implementation errors.
+    /// Callers must check `capabilities().speed_control` first.
+    async fn set_speed(
+        &self,
+        _device: &btleplug::platform::Peripheral,
+        _speed_kmh: f32,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("set_speed is not supported by this profile")
+    }
+
+    /// Start a session — roughly "press Play on the remote". Opt-in; callers
+    /// must only invoke when they're sure the belt is idle and the user is
+    /// ready (moving belts are a safety concern). Default errors.
+    async fn start(&self, _device: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
+        anyhow::bail!("start is not supported by this profile")
+    }
 
     /// Parse a BLE notification into a TreadmillEvent.
     /// Returns None if this profile does not handle the given characteristic.

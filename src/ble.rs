@@ -85,29 +85,22 @@ async fn check_known<'a>(
 }
 
 /// Scan for a treadmill that matches any registered profile.
-/// Does a quick 1-second sweep first, then falls back to full scan.
+/// First checks the adapter's peripheral cache (instant hit on reconnects within
+/// the same walker session), then falls back to a full scan.
 pub async fn find_treadmill<'a>(
     adapter: &Adapter,
     timeout: u64,
     registry: &'a ProfileRegistry,
 ) -> anyhow::Result<Option<(btleplug::platform::Peripheral, &'a dyn TreadmillProfile)>> {
-    // Quick check: maybe the adapter already knows about the device.
-    // Stop any stale scan first (e.g. from another instance or pre-sleep state).
-    // Small delay after stop lets BlueZ release the scan lock before we start again.
-    let _ = adapter.stop_scan().await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    info!("Quick scan (1 second)...");
-    adapter.start_scan(ScanFilter::default()).await?;
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    adapter.stop_scan().await?;
-
+    // Free path: the adapter may already know about the device from a previous
+    // scan in this process (BlueZ caches peripherals across scan start/stop).
     if let Some(found) = check_known(adapter, registry).await? {
-        info!("Found device on quick scan!");
+        info!("Found device in adapter cache");
         return Ok(Some(found));
     }
 
-    // Full scan.
-    info!("Full scan ({timeout} seconds)...");
+    // Otherwise do a full scan.
+    info!("Scanning ({timeout} seconds)...");
     let peripherals = scan(adapter, timeout).await?;
 
     for peripheral in peripherals {
