@@ -161,6 +161,27 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
   gap: 0 16px;
 }
 
+/* ===== FAQ ===== */
+details summary { list-style: none; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: '+';
+  display: inline-block;
+  width: 1.25em;
+  color: rgb(var(--walker-500));
+  font-weight: bold;
+}
+details[open] summary::before { content: '−'; }
+.faq-answer code {
+  background: rgb(var(--surface-950));
+  color: rgb(var(--walker-500));
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+.theme-c64 .faq-answer code { font-family: inherit; border: 1px solid rgb(var(--gray-700)); }
+
 /* ===== Animations ===== */
 @keyframes pixel-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 @keyframes smooth-pulse { 50% { opacity: 0.5; } }
@@ -183,6 +204,7 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
     </a>
     <a id="tab-leaderboard" href="/" class="nav-tab">Leaderboard</a>
     <a id="tab-activity" href="/activity" class="nav-tab" style="display:none">Activity</a>
+    <a id="tab-faq" href="/faq" class="nav-tab">FAQ</a>
   </div>
   <div id="nav-user" class="flex items-center"></div>
 </nav>
@@ -227,6 +249,129 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
   <h2 id="activity-heading" class="text-lg font-bold text-white mt-4 mb-4">Today's Activity</h2>
   <div id="activity-live" class="mb-2"></div>
   <div id="activity-closed"></div>
+</div>
+
+<!-- FAQ page -->
+<div id="page-faq" class="page px-6 pb-8 hidden">
+  <div class="max-w-3xl mx-auto mt-6">
+    <h1 class="text-3xl font-extrabold text-white mb-2">FAQ</h1>
+    <p class="text-sm text-gray-400 mb-8">How Walker works, in plain language.</p>
+
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-6 mb-3">Platform</h2>
+    <div class="space-y-2">
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What treadmills are supported?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Two UREVO models are tested today: the <strong class="text-white">SpaceWalk E1L</strong> (URTM041) and the <strong class="text-white">CyberPad</strong> (URTM051). The architecture supports multiple device profiles, so other Bluetooth walking pads can be added over time.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Can I walk from the browser?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Not yet. Today it's a CLI tool — run <code>walker walk</code> on a machine with Bluetooth near your treadmill. Browser-based BLE (Chromium-only) is on the roadmap.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Why does "today" sometimes show yesterday's numbers?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Walker runs in UTC everywhere, for simplicity. If you're east of UTC (e.g. Europe), there's a window after local midnight where the dashboard still considers it "the previous UTC day." It catches up when UTC rolls over. This is an accepted tradeoff — no per-user timezone config, client and server always agree on what "today" means.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How private is my activity?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          <strong class="text-white">Right now, during development: it's effectively public.</strong> Login sessions are identified by a cookie that stores your user ID, and your user ID is published in the leaderboard API. Anyone who copies your ID into that cookie can open your Activity page and subscribe to your live feed — including <strong class="text-white">weight and speed</strong>. Proper session tokens are on the roadmap; until then, assume everything you walk is visible to anyone curious. The only thing genuinely hidden is your email (admins can see it).
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How is the daily winner picked?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Whoever burned the most active kcal on that UTC day. Today's winner updates live while people are still walking; past days are frozen once the UTC day ends.
+        </div>
+      </details>
+    </div>
+
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-10 mb-3">How Tracking Works</h2>
+    <div class="space-y-2">
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What is a segment?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          A continuous period where your state doesn't change. A <strong class="text-white">walking segment</strong> means you're stepping, at one speed. An <strong class="text-white">idle segment</strong> means the belt is running but you're off it. Any change — new speed, walking-to-idle, idle-to-walking — starts a new segment. All daily totals on the dashboard are just sums over segments.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What do you use steps for?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          State detection only. Steps are the one honest signal the treadmill gives us — they stop the instant you stop walking. We watch the step counter to decide whether you're actually on the belt or just let it run while you grab a coffee.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Why don't steps count toward calories?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Three reasons: step length varies with speed; calorie burn depends on speed (via MET), not raw step count; and some treadmills (FTMS-based) don't report steps at all. Our rule: <strong class="text-white">steps detect, speed measures, server computes</strong>.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What if I step off the belt but leave it running?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          The treadmill keeps ticking distance and calories regardless — it can't tell you're gone. But your step counter stops. After a few seconds without a step change, we flip you to idle and stop counting. When you hop back on, we resume. Idle time contributes nothing to your calories or distance.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How are sessions split on the Activity page?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          A gap of more than 60 minutes between segments starts a new session. So if you walk in the morning and again after lunch, you'll see two session cards for the same day.
+        </div>
+      </details>
+    </div>
+
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-10 mb-3">The Numbers</h2>
+    <div class="space-y-2">
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What's the difference between active kcal and total kcal?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          <strong class="text-white">Active kcal</strong> = exercise only. <strong class="text-white">Total kcal</strong> = active + resting metabolic rate (what your body burns just existing). We show active because that's the honest "you did this" number. Total adds on calories you'd burn whether you walked or not, which just muddies the signal.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What is MET?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          MET (Metabolic Equivalent of Task) is a standard unit for how hard an activity is. 1 MET = sitting still, 2 MET = twice that intensity. We look up a MET value from your treadmill speed using the <a href="https://pacompendium.com/walking/" class="text-walker-500 hover:underline">Compendium of Physical Activities (2024)</a>, then compute: <code>MET × weight × time = calories</code>.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Why do 1.0 km/h and 1.5 km/h give the same MET?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          The Compendium lumps everything below 1.0 mph (≈1.61 km/h) into a single "very slow walking" bucket at MET 2.1. Both 1.0 and 1.5 km/h fall inside that bucket, so they resolve to the same value. We stay faithful to the published table rather than inventing sub-bucket interpolation that isn't in the source.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How accurate are the calories?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          The main variable is your weight. The default is 70 kg — if yours differs, set it. Your weight is snapshotted onto each segment when it's created, so updating your weight doesn't rewrite history; it just affects future segments.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How do I change my weight?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Run <code>walker set-weight 75</code> (replace 75 with your weight in kg). Future segments will use the new value; past segments keep the weight they were recorded with.
+        </div>
+      </details>
+    </div>
+
+  </div>
 </div>
 
 <!-- Tailwind: ensure dynamic classes from app.js are generated -->

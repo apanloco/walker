@@ -40,6 +40,8 @@ function initPage() {
   } else if (path.startsWith('/activity')) {
     currentActivityId = path.split('/')[2] || null;
     page = 'activity';
+  } else if (path === '/faq') {
+    page = 'faq';
   }
 
   // Profile and activity require login.
