@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use btleplug::api::{Peripheral, WriteType};
-use tracing::info;
+use tracing::debug;
 use uuid::Uuid;
 
 use super::{TreadmillCapabilities, TreadmillData, TreadmillEvent, TreadmillProfile, TreadmillStatus};
@@ -165,11 +165,11 @@ impl TreadmillProfile for UrevoProfile {
             .flat_map(|s| &s.characteristics)
             .find(|c| c.uuid == UREVO_WRITE_UUID)
         {
-            info!("Activating UREVO proprietary data stream...");
+            debug!("Activating UREVO proprietary data stream...");
             device
                 .write(ch, UREVO_ACTIVATE_CMD, WriteType::WithoutResponse)
                 .await?;
-            info!("UREVO data stream activated");
+            debug!("UREVO data stream activated");
         }
 
         // IMPORTANT: we intentionally do NOT write FTMS Request Control here.

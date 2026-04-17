@@ -515,7 +515,8 @@ On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM
 - `↑` / `↓` adjust target speed by 0.1 km/h, clamped to the model's `speed_range_kmh`
 - `Ctrl+C` or `q` stops the command and restores cooked mode
 - **Target mirrors the device's reported speed on every Running data packet**, except for a short ~750 ms grace window after we issue a `set_speed` write (the treadmill takes ~300 ms to reflect the new target, so a stale in-flight data packet would otherwise undo our press). This covers the initial sync at session start AND any remote-induced changes mid-session. The one other exception is Pausing — the device reports a decreasing speed as the belt winds down, but we bail out of the sync path in that branch anyway.
-- Resets to 1.0 km/h on Pausing/Paused/Standby/Off so next session syncs fresh.
+- **Arrow keys are only honoured when `last_status == Running`**. The treadmill silently ignores speed writes in other states, so we suppress the keypress entirely (no write, no print, no beep) rather than faking a target change.
+- Target is *not* reset on Pausing/Paused — it still reflects the last commanded speed, which is useful context. Only a transition to Standby/Off (real session end) resets it to 1.0.
 
 Each press sends the proprietary speed command to `0xFFF2`. Speed changes are not reported to the server directly — the observed speed from the proprietary stream is what gets logged.
 

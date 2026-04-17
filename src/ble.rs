@@ -1,7 +1,7 @@
 use btleplug::api::{Central, CharPropFlags, Characteristic, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::{Adapter, Manager};
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::device::{ProfileRegistry, TreadmillProfile};
 
@@ -50,7 +50,7 @@ pub async fn get_adapter() -> anyhow::Result<Adapter> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("No Bluetooth adapters found"))?;
 
-    info!(adapter = ?adapter.adapter_info().await?, "Using adapter");
+    debug!(adapter = ?adapter.adapter_info().await?, "Using adapter");
     Ok(adapter)
 }
 
@@ -138,7 +138,7 @@ pub async fn subscribe_notify(
         }
     }
 
-    info!(
+    debug!(
         "Subscribed to {} notification characteristic(s)",
         subscribed.len()
     );

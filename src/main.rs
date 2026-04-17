@@ -178,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
         .as_deref()
         .map(|v| format!("walker={v}"))
         .or_else(|| std::env::var("RUST_LOG").ok())
-        .unwrap_or_else(|| "warn".to_string());
+        .unwrap_or_else(|| "info".to_string());
 
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(&log_filter))
@@ -524,7 +524,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
         let stream: anyhow::Result<_> = async {
             device.discover_services().await?;
             let services = device.services();
-            info!("Discovered {} service(s)", services.len());
+            tracing::debug!("Discovered {} service(s)", services.len());
 
             for service in &services {
                 let chars: Vec<String> = service
@@ -535,7 +535,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
                         format!("    {} [{:?}] ({short})", c.uuid, c.properties)
                     })
                     .collect();
-                info!(uuid = %service.uuid, "\n{}", chars.join("\n"));
+                tracing::debug!(uuid = %service.uuid, "\n{}", chars.join("\n"));
             }
 
             ble::subscribe_notify(&device, profile.notify_uuids()).await?;
@@ -600,6 +600,11 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
         let initial_target = 1.0_f32.clamp(caps.speed_range_kmh.0, caps.speed_range_kmh.1);
         let mut target_speed_kmh: f32 = initial_target;
         let mut last_set_speed_at: Option<std::time::Instant> = None;
+        // Last seen device status. Arrow keys only send writes when this is
+        // Running — the treadmill ignores speed commands in other states, and
+        // sending them anyway just produces phantom "Target speed set to"
+        // lines without effect.
+        let mut last_status: Option<TreadmillStatus> = None;
         const SET_SPEED_GRACE: Duration = Duration::from_millis(750);
 
         let mut timeout_fut = Box::pin(tokio::time::sleep(Duration::from_secs(10)));
@@ -620,6 +625,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
                     match profile.parse_notification(&notification.uuid, &notification.value) {
                         Some(TreadmillEvent::Data(data)) => {
                             last_status_only = None;
+                            last_status = Some(data.status);
                             // Mirror the device's reported target speed, except
                             // during a short grace window right after a write —
                             // the treadmill takes ~300ms to reflect the new
@@ -638,14 +644,16 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
                                         .clamp(caps.speed_range_kmh.0, caps.speed_range_kmh.1);
                                 }
                             }
-                            // Pausing/Paused = belt stopping. Reset everything.
+                            // Pausing/Paused = belt winding down. Reset activity
+                            // tracking but keep the target — it still reflects
+                            // the last commanded speed, which is informationally
+                            // correct while paused.
                             if matches!(
                                 data.status,
                                 TreadmillStatus::Pausing | TreadmillStatus::Paused
                             ) {
                                 step_tracker.reset();
                                 activity_tracker.reset();
-                                target_speed_kmh = initial_target;
                                 let activity = activity_tracker.state();
                                 let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
                                 if last_display.as_ref() != Some(&key) {
@@ -681,6 +689,7 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
                         }
                         Some(TreadmillEvent::StatusOnly(status)) => {
                             last_display = None;
+                            last_status = Some(status);
                             if let Some(ref mut rpt) = server_reporter {
                                 rpt.send_stopped();
                             }
@@ -719,6 +728,13 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
                             break WalkExit::UserQuit;
                         }
                         (KeyCode::Up, _) | (KeyCode::Down, _) => {
+                            // The treadmill only accepts speed changes while
+                            // Running. Writing in other states is silently
+                            // ignored by the device — suppress the arrow so
+                            // we don't print phantom "Target speed set" lines.
+                            if last_status != Some(TreadmillStatus::Running) {
+                                continue;
+                            }
                             let step = if matches!(ke.code, KeyCode::Up) { 0.1 } else { -0.1 };
                             let (min, max) = caps.speed_range_kmh;
                             let new_target = (target_speed_kmh + step).clamp(min, max);

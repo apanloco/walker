@@ -1,6 +1,6 @@
 use crate::activity::ActivityState;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Sends updates to the walker server via HTTP POST.
 /// Only sends on state changes or every heartbeat_interval seconds.
@@ -74,7 +74,7 @@ impl ServerReporter {
             .unwrap_or(0.0);
         if reason == "change" {
             let prev = self.last_sent.as_ref().unwrap();
-            info!(
+            debug!(
                 reason,
                 elapsed_ms = format!("{:.0}", elapsed * 1000.0),
                 prev_state = prev.state,
@@ -91,7 +91,7 @@ impl ServerReporter {
         self.send_count += 1;
         let window = self.count_start.elapsed().as_secs_f64();
         if window >= 10.0 {
-            info!(
+            debug!(
                 sends = self.send_count,
                 window_secs = format!("{:.1}", window),
                 rate = format!("{:.1}", self.send_count as f64 / window),
