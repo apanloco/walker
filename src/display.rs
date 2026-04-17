@@ -25,11 +25,12 @@ pub fn char_short_name(uuid: &Uuid) -> &'static str {
 }
 
 pub fn print_walk_header() {
-    println!(
-        "  {:<12} {:<10} {:<10} {:<10} {:<10} {:<8} {:<10} {:<10}",
+    // \r\n so rows align cleanly in raw mode (used when speed control is active).
+    print!(
+        "  {:<12} {:<10} {:<10} {:<10} {:<10} {:<8} {:<10} {:<10}\r\n",
         "ACTIVITY", "STATUS", "SPEED", "DURATION", "DISTANCE", "STEPS", "ACTIVE", "IDLE"
     );
-    println!("  {}", "─".repeat(90));
+    print!("  {}\r\n", "─".repeat(90));
 }
 
 /// Colorize a string after padding, so ANSI escape codes don't affect column width.
@@ -84,16 +85,16 @@ pub fn print_data_row(data: &TreadmillData, activity: &ActivityState) {
         pad_color(status_name, 10, colored::Color::Yellow, false)
     };
 
-    println!(
-        "  {activity_col} {status_col} {:<10} {:<10} {:<10} {:<8} {:<10} {:<10}",
+    print!(
+        "  {activity_col} {status_col} {:<10} {:<10} {:<10} {:<8} {:<10} {:<10}\r\n",
         speed, duration, distance, steps, active, idle,
     );
 }
 
 pub fn print_status_row(status: &TreadmillStatus, raw: &[u8]) {
     let status_col = pad_dimmed(status.display_name(), 10);
-    println!(
-        "  {:<12} {status_col} {:<10} {:<10} {:<10} {:<8} {:<10} {}",
+    print!(
+        "  {:<12} {status_col} {:<10} {:<10} {:<10} {:<8} {:<10} {}\r\n",
         "—",
         "—",
         "—",
@@ -105,8 +106,8 @@ pub fn print_status_row(status: &TreadmillStatus, raw: &[u8]) {
 }
 
 pub fn print_unknown_row(label: &str, data: &[u8]) {
-    println!(
-        "  {:<25} ({:>2} bytes)  {}",
+    print!(
+        "  {:<25} ({:>2} bytes)  {}\r\n",
         label.yellow(),
         data.len(),
         hex_dump(data),
@@ -115,10 +116,20 @@ pub fn print_unknown_row(label: &str, data: &[u8]) {
 
 pub fn print_other_notification(uuid: &Uuid, data: &[u8]) {
     let name = char_short_name(uuid);
-    println!(
-        "  {:<25} ({:>2} bytes)  {}",
+    print!(
+        "  {:<25} ({:>2} bytes)  {}\r\n",
         name.cyan(),
         data.len(),
         hex_dump(data),
+    );
+}
+
+/// One-line feedback when the user changes the target speed.
+/// Written as \r\n for raw-mode compatibility.
+pub fn print_target_speed(target_kmh: f32) {
+    print!(
+        "  {}  Target speed set to: {:.1} km/h\r\n",
+        "→".bold().yellow(),
+        target_kmh
     );
 }
