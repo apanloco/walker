@@ -15,7 +15,7 @@ const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function dayLabel(dateStr, todayStr) {
   const d = new Date(dateStr + 'T00:00:00Z');
   const name = SHORT_DAYS[d.getUTCDay()];
-  if (dateStr === todayStr) return '<span class="text-walker-500 font-bold underline">' + name + '</span>';
+  if (dateStr === todayStr) return '<span class="text-walker-500 font-bold">' + name + '</span>';
   return name;
 }
 
