@@ -329,11 +329,16 @@ pub async fn close_stale_segments(
     Ok(user_ids)
 }
 
-/// Get live status (moving, speed) for all users with open segments.
-pub async fn get_live_statuses(pool: &PgPool) -> anyhow::Result<HashMap<uuid::Uuid, (bool, f64)>> {
-    let rows = sqlx::query("SELECT user_id, moving, speed_kmh FROM segments WHERE open = true")
-        .fetch_all(pool)
-        .await?;
+/// Get live status (moving, speed, MET) for all users with open segments.
+pub async fn get_live_statuses(
+    pool: &PgPool,
+) -> anyhow::Result<HashMap<uuid::Uuid, (bool, f64, f64)>> {
+    let rows = sqlx::query(
+        "SELECT user_id, moving, speed_kmh, met_for_speed(speed_kmh) AS met
+         FROM segments WHERE open = true",
+    )
+    .fetch_all(pool)
+    .await?;
 
     Ok(rows
         .iter()
@@ -341,7 +346,8 @@ pub async fn get_live_statuses(pool: &PgPool) -> anyhow::Result<HashMap<uuid::Uu
             let user_id: uuid::Uuid = r.get("user_id");
             let moving: bool = r.get("moving");
             let speed: f32 = r.get("speed_kmh");
-            (user_id, (moving, speed as f64))
+            let met: f32 = r.get("met");
+            (user_id, (moving, speed as f64, met as f64))
         })
         .collect())
 }

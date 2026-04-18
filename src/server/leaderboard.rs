@@ -54,13 +54,13 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
         entries
             .drain(..)
             .map(|e| {
-                let (status, speed) = live_statuses
+                let (status, speed, met) = live_statuses
                     .get(&e.id)
-                    .map(|(moving, spd)| {
+                    .map(|(moving, spd, met)| {
                         let s = if *moving { "walking" } else { "idle" };
-                        (s.to_string(), *spd)
+                        (s.to_string(), *spd, *met)
                     })
-                    .unwrap_or(("offline".to_string(), 0.0));
+                    .unwrap_or(("offline".to_string(), 0.0, 0.0));
                 serde_json::json!({
                     "id": e.id,
                     "name": e.name,
@@ -70,6 +70,7 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
                     "distance_km": e.distance_km,
                     "status": status,
                     "speed_kmh": speed,
+                    "met": met,
                 })
             })
             .collect()
@@ -78,13 +79,13 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
     let daily_winners_json: Vec<serde_json::Value> = daily_winners
         .into_iter()
         .map(|w| {
-            let (status, speed) = live_statuses
+            let (status, speed, met) = live_statuses
                 .get(&w.id)
-                .map(|(moving, spd)| {
+                .map(|(moving, spd, met)| {
                     let s = if *moving { "walking" } else { "idle" };
-                    (s.to_string(), *spd)
+                    (s.to_string(), *spd, *met)
                 })
-                .unwrap_or(("offline".to_string(), 0.0));
+                .unwrap_or(("offline".to_string(), 0.0, 0.0));
             serde_json::json!({
                 "date": w.date,
                 "id": w.id,
@@ -94,6 +95,7 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
                 "distance_km": w.distance_km,
                 "status": status,
                 "speed_kmh": speed,
+                "met": met,
             })
         })
         .collect();

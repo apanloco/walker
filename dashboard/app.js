@@ -187,8 +187,9 @@ function rankBadge(i) {
 
 function statusIndicator(e) {
   if (e.status === 'walking') {
+    const met = e.met ? ' (MET ' + e.met.toFixed(2) + ')' : '';
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-walking mr-1.5 live-blink"></span>' +
-      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h</span>';
+      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h' + met + '</span>';
   }
   if (e.status === 'idle') {
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-idle mr-1.5"></span>' +
