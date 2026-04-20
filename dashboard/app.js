@@ -187,9 +187,9 @@ function rankBadge(i) {
 
 function statusIndicator(e) {
   if (e.status === 'walking') {
-    const met = e.met ? ' (MET ' + e.met.toFixed(2) + ')' : '';
+    const kph = e.active_kcal_per_h ? ' (' + e.active_kcal_per_h.toFixed(1) + ' kcal/h)' : '';
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-walking mr-1.5 live-blink"></span>' +
-      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h' + met + '</span>';
+      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h' + kph + '</span>';
   }
   if (e.status === 'idle') {
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-idle mr-1.5"></span>' +
@@ -513,7 +513,7 @@ function renderProfile(p) {
   }
   const maxWeekCal = Math.max(...allDays.map(d => d.active_calories_kcal), 0.1);
   const weekBars = allDays.map(d => {
-    const pct = d.active_calories_kcal > 0 ? Math.max((d.active_calories_kcal / maxWeekCal) * 100, 3) : 0;
+    const pct = d.active_calories_kcal >= 1 ? Math.max((d.active_calories_kcal / maxWeekCal) * 100, 1) : 0;
     const isToday = d.date === todayStr;
     const dayName = dayLabel(d.date, todayStr);
     const isLive = isToday && p.live && p.live.status === 'walking';
@@ -845,7 +845,7 @@ function renderLiveSegment(seg) {
 function renderSegmentCard(seg) {
   const dur = seg.duration_s;
   if (seg.moving) {
-    const met = seg.met;
+    const kcalPerH = (seg.met - 1) * seg.weight_kg;
     const segStart = new Date(seg.started_at);
     const segEnd = new Date(segStart.getTime() + dur * 1000);
     let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
@@ -858,7 +858,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-300" style="grid-column:4">' + (seg.distance_m / 1000).toFixed(2) + ' km</span>';
     html += '<span class="text-gray-300" style="grid-column:5">' + seg.active_calories_kcal.toFixed(1) + ' kcal</span>';
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
-    html += '<span class="text-gray-600 text-xs" style="grid-column:7">MET ' + met.toFixed(2) + '</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:7">' + kcalPerH.toFixed(1) + ' kcal/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
     html += '</div>';
     html += '</div>';

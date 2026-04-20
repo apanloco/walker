@@ -238,10 +238,10 @@ Returns `{"segment": null}` when the user has no open segment.
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
 {
-  "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0, "met": 3.5}],
+  "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0, "active_kcal_per_h": 175.0}],
   "weekly": [...],
   "all_time": [...],
-  "daily_winners": [{"date": "2026-04-16", "id": "uuid", "name": "alice", "avatar_url": "...", "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0, "met": 3.5}, ...]
+  "daily_winners": [{"date": "2026-04-16", "id": "uuid", "name": "alice", "avatar_url": "...", "active_calories_kcal": 63.2, "status": "walking", "speed_kmh": 4.0, "active_kcal_per_h": 175.0}, ...]
 }
 ```
 
