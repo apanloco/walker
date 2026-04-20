@@ -329,13 +329,15 @@ pub async fn close_stale_segments(
     Ok(user_ids)
 }
 
-/// Get live status (moving, speed, MET) for all users with open segments.
+/// Get live status (moving, speed, active kcal/h) for all users with open segments.
+/// Active kcal/h = (MET - 1) × weight_kg — the per-hour burn rate above resting.
 pub async fn get_live_statuses(
     pool: &PgPool,
 ) -> anyhow::Result<HashMap<uuid::Uuid, (bool, f64, f64)>> {
     let rows = sqlx::query(
-        "SELECT user_id, moving, speed_kmh, met_for_speed(speed_kmh) AS met
-         FROM segments WHERE open = true",
+        "SELECT s.user_id, s.moving, s.speed_kmh,
+                (met_for_speed(s.speed_kmh) - 1) * s.weight_kg AS active_kcal_per_h
+         FROM segments s WHERE s.open = true",
     )
     .fetch_all(pool)
     .await?;
@@ -346,8 +348,8 @@ pub async fn get_live_statuses(
             let user_id: uuid::Uuid = r.get("user_id");
             let moving: bool = r.get("moving");
             let speed: f32 = r.get("speed_kmh");
-            let met: f32 = r.get("met");
-            (user_id, (moving, speed as f64, met as f64))
+            let kcal_per_h: f32 = r.get("active_kcal_per_h");
+            (user_id, (moving, speed as f64, kcal_per_h as f64))
         })
         .collect())
 }

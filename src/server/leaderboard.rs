@@ -54,11 +54,11 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
         entries
             .drain(..)
             .map(|e| {
-                let (status, speed, met) = live_statuses
+                let (status, speed, kcal_per_h) = live_statuses
                     .get(&e.id)
-                    .map(|(moving, spd, met)| {
+                    .map(|(moving, spd, kph)| {
                         let s = if *moving { "walking" } else { "idle" };
-                        (s.to_string(), *spd, *met)
+                        (s.to_string(), *spd, *kph)
                     })
                     .unwrap_or(("offline".to_string(), 0.0, 0.0));
                 serde_json::json!({
@@ -70,7 +70,7 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
                     "distance_km": e.distance_km,
                     "status": status,
                     "speed_kmh": speed,
-                    "met": met,
+                    "active_kcal_per_h": kcal_per_h,
                 })
             })
             .collect()
@@ -79,11 +79,11 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
     let daily_winners_json: Vec<serde_json::Value> = daily_winners
         .into_iter()
         .map(|w| {
-            let (status, speed, met) = live_statuses
+            let (status, speed, kcal_per_h) = live_statuses
                 .get(&w.id)
-                .map(|(moving, spd, met)| {
+                .map(|(moving, spd, kph)| {
                     let s = if *moving { "walking" } else { "idle" };
-                    (s.to_string(), *spd, *met)
+                    (s.to_string(), *spd, *kph)
                 })
                 .unwrap_or(("offline".to_string(), 0.0, 0.0));
             serde_json::json!({
@@ -95,7 +95,7 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
                 "distance_km": w.distance_km,
                 "status": status,
                 "speed_kmh": speed,
-                "met": met,
+                "active_kcal_per_h": kcal_per_h,
             })
         })
         .collect();
