@@ -348,8 +348,8 @@ pub async fn get_live_statuses(
             let user_id: uuid::Uuid = r.get("user_id");
             let moving: bool = r.get("moving");
             let speed: f32 = r.get("speed_kmh");
-            let kcal_per_h: f32 = r.get("active_kcal_per_h");
-            (user_id, (moving, speed as f64, kcal_per_h as f64))
+            let kcal_per_h: f64 = r.get("active_kcal_per_h");
+            (user_id, (moving, speed as f64, kcal_per_h))
         })
         .collect())
 }
