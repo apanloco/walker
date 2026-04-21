@@ -506,7 +506,7 @@ Read-only. Reports the device's advertised speed range, inclination range, and M
 walker walk               # connect to treadmill, report to production server
 walker walk --dev         # report to local dev server
 walker walk --offline     # run without reporting (no login required)
-walker walk --start       # auto-start the belt after connect (safety: only use when ready to walk)
+walker walk --start       # auto-start the belt after connect (safety: only use when ready to walk; fires once per process — not on reconnect)
 ```
 
 On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM041)` followed by control hints for the model.
