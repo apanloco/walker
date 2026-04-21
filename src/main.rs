@@ -447,7 +447,7 @@ enum WalkExit {
 }
 
 #[cfg(feature = "client")]
-async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Result<()> {
+async fn walk(timeout: u64, dev: bool, offline: bool, mut start: bool) -> anyhow::Result<()> {
     use btleplug::api::Peripheral;
     use colored::Colorize;
     use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
@@ -541,6 +541,9 @@ async fn walk(timeout: u64, dev: bool, offline: bool, start: bool) -> anyhow::Re
             ble::subscribe_notify(&device, profile.notify_uuids()).await?;
             profile.activate(&device).await?;
             if start {
+                // One-shot: consume regardless of outcome so later reconnects
+                // (e.g. overnight power-cycle) don't silently restart the belt.
+                start = false;
                 match profile.start(&device).await {
                     Ok(()) => info!("Sent start command"),
                     Err(e) => warn!(error = %e, "Failed to send start command"),
