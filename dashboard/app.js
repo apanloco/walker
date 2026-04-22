@@ -27,7 +27,7 @@ function initPage() {
   // Migrate legacy hash URLs.
   if (location.hash.length > 1) {
     const hash = location.hash.slice(1);
-    if (hash.startsWith('profile/') || hash.startsWith('activity/') || hash === 'activity') {
+    if (hash.startsWith('profile/')) {
       location.replace('/' + hash);
       return;
     }
@@ -37,15 +37,15 @@ function initPage() {
   if (path.startsWith('/profile/')) {
     currentProfileId = path.split('/')[2] || null;
     page = 'profile';
-  } else if (path.startsWith('/activity')) {
-    currentActivityId = path.split('/')[2] || null;
-    page = 'activity';
+  } else if (path.startsWith('/history')) {
+    currentHistoryId = path.split('/')[2] || null;
+    page = 'history';
   } else if (path === '/faq') {
     page = 'faq';
   }
 
-  // Profile and activity require login.
-  if ((page === 'profile' || page === 'activity') && !loggedInId) {
+  // Profile and history require login.
+  if ((page === 'profile' || page === 'history') && !loggedInId) {
     location.replace('/');
     return;
   }
@@ -66,26 +66,26 @@ function initPage() {
 
   if (page === 'profile') {
     fetchProfile();
-  } else if (page === 'activity') {
-    if (!currentActivityId) currentActivityId = loggedInId;
-    currentActivityDate = new URLSearchParams(location.search).get('date');
+  } else if (page === 'history') {
+    if (!currentHistoryId) currentHistoryId = loggedInId;
+    currentHistoryDate = new URLSearchParams(location.search).get('date');
     // Treat today's date the same as no date (enables live WebSocket).
     const today = new Date();
     const todayStr = today.getUTCFullYear() + '-' + String(today.getUTCMonth() + 1).padStart(2, '0') + '-' + String(today.getUTCDate()).padStart(2, '0');
-    if (currentActivityDate === todayStr) currentActivityDate = null;
+    if (currentHistoryDate === todayStr) currentHistoryDate = null;
     // Update heading.
-    const heading = document.getElementById('activity-heading');
+    const heading = document.getElementById('history-heading');
     if (heading) {
-      if (currentActivityDate) {
-        const d = new Date(currentActivityDate + 'T00:00:00');
-        heading.textContent = formatDate(d) + ' Activity';
+      if (currentHistoryDate) {
+        const d = new Date(currentHistoryDate + 'T00:00:00');
+        heading.textContent = formatDate(d);
       } else {
-        heading.textContent = "Today's Activity";
+        heading.textContent = "Today";
       }
     }
-    fetchActivityClosed();
+    fetchHistoryClosed();
     // Only connect live WebSocket for today.
-    if (!currentActivityDate) connectActivityWs();
+    if (!currentHistoryDate) connectHistoryWs();
   }
 }
 
@@ -106,9 +106,9 @@ function setTheme(name) {
 
 const loggedInId = getCookie('walker_id');
 let currentProfileId = loggedInId;
-let currentActivityId = null;
-let currentActivityDate = null; // null = today
-let activityWs = null;
+let currentHistoryId = null;
+let currentHistoryDate = null; // null = today
+let historyWs = null;
 let lastLiveSegment = null;
 let loggedInAvatar = null;
 
@@ -155,8 +155,8 @@ function buildAvatarButton(avatarUrl) {
 }
 
 if (loggedInId) {
-  // Show Activity tab.
-  document.getElementById('tab-activity').style.display = '';
+  // Show History tab.
+  document.getElementById('tab-history').style.display = '';
   // Build avatar button (no avatar URL yet — will update after first profile fetch).
   buildAvatarButton(null);
   // Fetch own profile to get avatar URL.
@@ -194,13 +194,6 @@ const SEP = ' <span class="text-gray-600">|</span> ';
 function inclineLabel(pct) {
   if (pct == null || pct === 0) return 'no incline';
   return pct.toFixed(1) + '% incline';
-}
-
-// Per-segment incline cell on the activity page. Distinguishes "no sensor"
-// (—) from "sensor reported 0%" (0.0%) so the audit view is honest.
-function formatIncline(pct) {
-  if (pct == null) return '—';
-  return pct.toFixed(1) + '%';
 }
 
 function statusIndicator(e) {
@@ -438,7 +431,7 @@ function buildHeatmap(days) {
       const isOwn = currentProfileId === loggedInId;
       const isClickable = currentProfileId && isOwn && (hasActivity || isDev);
       const tag = isClickable ? 'a' : 'div';
-      const href = isClickable ? ' href="/activity/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
+      const href = isClickable ? ' href="/history/' + currentProfileId + '?date=' + cell.dateStr + '"' : '';
       html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
       html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">';
       html += tooltipLines;
@@ -637,12 +630,12 @@ function renderProfile(p) {
   if (window.twemoji) twemoji.parse(el);
 }
 
-// -- Activity page --
+// -- History page --
 
-function fetchActivityClosed() {
-  if (!currentActivityId) return;
-  const dateParam = currentActivityDate ? '?date=' + encodeURIComponent(currentActivityDate) : '';
-  fetch('/api/activity/' + encodeURIComponent(currentActivityId) + dateParam)
+function fetchHistoryClosed() {
+  if (!currentHistoryId) return;
+  const dateParam = currentHistoryDate ? '?date=' + encodeURIComponent(currentHistoryDate) : '';
+  fetch('/api/history/' + encodeURIComponent(currentHistoryId) + dateParam)
     .then(r => {
       if (!r.ok) throw new Error(r.status);
       return r.json();
@@ -650,17 +643,17 @@ function fetchActivityClosed() {
     .then(data => {
       renderClosedSegments(data.segments || []);
       // Re-render live segment — renderClosedSegments rebuilds the DOM
-      // which destroys #activity-live-inner content.
+      // which destroys #history-live-inner content.
       renderLiveSegment(lastLiveSegment);
     })
-    .catch(e => console.error('Failed to fetch activity:', e));
+    .catch(e => console.error('Failed to fetch history:', e));
 }
 
-function connectActivityWs() {
-  disconnectActivityWs();
-  if (!currentActivityId) return;
+function connectHistoryWs() {
+  disconnectHistoryWs();
+  if (!currentHistoryId) return;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws/live/' + encodeURIComponent(currentActivityId));
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/live/' + encodeURIComponent(currentHistoryId));
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
@@ -669,31 +662,31 @@ function connectActivityWs() {
     } catch (_) {}
   };
   ws.onclose = () => {
-    // Reconnect if we're still on the activity page.
-    if (activityWs === ws) {
-      activityWs = null;
+    // Reconnect if we're still on the history page.
+    if (historyWs === ws) {
+      historyWs = null;
       setTimeout(() => {
-        if (currentActivityId && !document.getElementById('page-activity').classList.contains('hidden')) {
-          connectActivityWs();
+        if (currentHistoryId && !document.getElementById('page-history').classList.contains('hidden')) {
+          connectHistoryWs();
         }
       }, 2000);
     }
   };
   ws.onerror = () => ws.close();
-  activityWs = ws;
+  historyWs = ws;
 }
 
-function disconnectActivityWs() {
-  if (activityWs) {
-    const ws = activityWs;
-    activityWs = null;
+function disconnectHistoryWs() {
+  if (historyWs) {
+    const ws = historyWs;
+    historyWs = null;
     ws.close();
   }
   lastLiveSegment = null;
 }
 
 function renderClosedSegments(segments) {
-  const el = document.getElementById('activity-closed');
+  const el = document.getElementById('history-closed');
   if (!el) return;
 
   // Group segments into sessions (gap > 60 min = separate session).
@@ -719,7 +712,7 @@ function renderClosedSegments(segments) {
   sessions.reverse();
   sessions.forEach(s => s.reverse());
 
-  const isToday = !currentActivityDate;
+  const isToday = !currentHistoryDate;
 
   // Always create at least one session panel so there's a visible day-card.
   // For today, this also gives the live segment a home.
@@ -755,11 +748,11 @@ function renderClosedSegments(segments) {
       window._sessionClosedCal = totalCal;
       window._sessionClosedDist = totalDist;
       window._sessionClosedDur = totalDur;
-      html += '<div id="activity-live-inner"></div>';
+      html += '<div id="history-live-inner"></div>';
     }
 
     if (isEmpty) {
-      html += '<div id="activity-empty" class="text-center text-sm text-gray-600 py-4">No activity</div>';
+      html += '<div id="history-empty" class="text-center text-sm text-gray-600 py-4">No activity</div>';
     }
 
     session.forEach((seg, segi) => {
@@ -793,15 +786,15 @@ function renderClosedSegments(segments) {
 }
 
 function renderLiveSegment(seg) {
-  const outerEl = document.getElementById('activity-live');
-  const innerEl = document.getElementById('activity-live-inner');
+  const outerEl = document.getElementById('history-live');
+  const innerEl = document.getElementById('history-live-inner');
 
   // Clear both containers first.
   if (outerEl) outerEl.innerHTML = '';
   if (innerEl) innerEl.innerHTML = '';
 
   // Hide "No activity" placeholder when live segment arrives.
-  const emptyEl = document.getElementById('activity-empty');
+  const emptyEl = document.getElementById('history-empty');
   if (emptyEl) emptyEl.style.display = seg ? 'none' : '';
 
   if (!seg) return;
@@ -885,7 +878,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:7">' + kcalPerH.toFixed(1) + ' kcal/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
-    html += '<span class="text-gray-600 text-xs" style="grid-column:9">' + formatIncline(seg.incline_percent) + '</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:9">' + inclineLabel(seg.incline_percent) + '</span>';
     html += '</div>';
     html += '</div>';
     return html;
@@ -924,7 +917,7 @@ function connect() {
   // WebSocket only fires on state changes (segment open/close/disconnect).
   ws.onmessage = () => {
     // Refetch closed segments — a segment was just opened or closed.
-    if (currentActivityId) fetchActivityClosed();
+    if (currentHistoryId) fetchHistoryClosed();
     fetchLeaderboard();
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
     if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();

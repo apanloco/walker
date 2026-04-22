@@ -14,11 +14,10 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 ## TODO
 
-1. **Activity page: rolling history** — Today's activity shows full segment detail (including live). Below it, show the past 7 days as summarized daily cards (segment count, total active kcal, distance, time — no individual segments). Top card = "Today" (live), below = "Past 7 Days" (not live, fetched once). Reuses the existing `/api/activity/{id}?date=` endpoint per day, or a new summary endpoint.
-2. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
-3. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
-4. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
-5. **Phase out total kcal** — The platform should show active kcal only. Remove total kcal from: leaderboard hover tooltip, profile stats, and any other UI surfaces. Active kcal is the meaningful number; total kcal includes resting metabolic rate which just adds noise. Server can keep computing both for API backwards compatibility, but the dashboard should stop exposing total.
+1. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
+2. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
+3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
+4. **Phase out total kcal** — The platform should show active kcal only. Remove total kcal from: leaderboard hover tooltip, profile stats, and any other UI surfaces. Active kcal is the meaningful number; total kcal includes resting metabolic rate which just adds noise. Server can keep computing both for API backwards compatibility, but the dashboard should stop exposing total.
 
 ## License
 
@@ -51,13 +50,13 @@ src/
     db.rs          — PostgreSQL: migrations, segment CRUD, MET table, queries, dev seed data
     update.rs      — POST /api/update, segment lifecycle (open/close/heartbeat)
     live.rs        — /ws/live + /ws/live/{id} WebSockets, simulate register, disconnect checker
-    activity.rs    — GET /api/activity/{id} segment timeline
+    history.rs     — GET /api/history/{id} segment timeline
     dashboard.rs   — serves dashboard (include_str! in prod, ServeDir in dev)
     leaderboard.rs — GET /api/leaderboard with live status merge
     profile.rs     — GET /api/profile/{id} with year history, records, periods
 dashboard/
-  index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, activity pages
-  app.js           — leaderboard, profile with heatmap, activity timeline, WebSocket, theme switcher
+  index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, history pages
+  app.js           — leaderboard, profile with heatmap, history timeline, WebSocket, theme switcher
 migrations/
   001_initial.sql       — users, tokens, segments tables
   002_calorie_functions — MET table + calorie wrappers (3-arg; superseded by 006)
@@ -111,7 +110,7 @@ Dashboard   ←──  /ws/live            (WebSocket, notification-only, trigge
 Dashboard   ←──  /ws/live/{id}       (WebSocket, per-user live segment push)
 Dashboard   ←──  GET /api/leaderboard (REST)
 Dashboard   ←──  GET /api/profile/{id} (REST)
-Dashboard   ←──  GET /api/activity/{id} (REST, segment timeline)
+Dashboard   ←──  GET /api/history/{id} (REST, segment timeline)
 Games       ←──  /ws/live            (same WebSocket)
 ```
 
@@ -223,7 +222,7 @@ Incline change threshold for state-change detection is 0.05 percentage points (m
 
 ### Weight
 
-Default 70.0 kg. Stored on each segment at creation time so historical calories remain accurate if weight changes. The Activity page shows weight per segment, making users aware it affects their numbers.
+Default 70.0 kg. Stored on each segment at creation time so historical calories remain accurate if weight changes. The History page shows weight per segment, making users aware it affects their numbers.
 
 ### Timezone
 
@@ -255,7 +254,7 @@ All timing constants in one place. Referenced throughout this doc.
 
 **`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + on each disconnect check interval. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
 
-**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the open segment JSON on every heartbeat and state change. Dashboard subscribes when viewing a user's activity page, unsubscribes when navigating away.
+**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the open segment JSON on every heartbeat and state change. Generic live feed — the dashboard uses it on the History page, but it's also intended for game integrations and any other client that wants real-time open-segment data.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "incline_percent": null,
              "duration_s": 120.5, "weight_kg": 70.0, "calories_kcal": 12.3,
@@ -279,7 +278,7 @@ Returns `{"segment": null}` when the user has no open segment. `incline_percent`
 
 **`GET /api/profile/{id}`** — full year history, records, period calories. **Requires login** (`walker_id` cookie).
 
-**`GET /api/activity/{id}?date=YYYY-MM-DD`** — segments for a given date (defaults to today). **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user (weight is shown per segment, so activity is private).
+**`GET /api/history/{id}?date=YYYY-MM-DD`** — segments for a given date (defaults to today). **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user (weight is shown per segment, so history is private).
 
 ### Dashboard
 
@@ -312,7 +311,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 
 **Page code (`app.js`) is theme-unaware.** It uses semantic Tailwind classes (`bg-walker-500`, `bg-heat-3`, `bg-status-walking`) that resolve to different colors per theme via CSS variables. No theme conditionals in page rendering code.
 
-**Navigation:** Logo + tabs (Leaderboard, Activity, FAQ) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). Activity tab only visible when logged in; Leaderboard and FAQ are public. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
+**Navigation:** Logo + tabs (Leaderboard, History, FAQ) on the left. Avatar dropdown on the right (Profile, Theme picker, Logout). History tab only visible when logged in; Leaderboard and FAQ are public. Profile is accessed via avatar menu (your profile) or by clicking a user on the leaderboard (their profile).
 
 **Leaderboard tab** (default, public — no login required):
 - Today / Last 7 Days / All Time top 10
@@ -324,7 +323,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 **Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
 - Last 7 days: horizontal bar chart with live indicator (blinking dot next to today when walking/idle). Bars show "active kcal" label. Refetched on `/ws/live` notifications so bars update live while walking.
-- GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → activity page for that date
+- GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → history page for that date
 - Stats grid: total kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
@@ -335,23 +334,23 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Uses native `<details>`/`<summary>` for expand/collapse — no JavaScript
 - Route: `/faq`. All content lives inline in `index.html`; theme-unaware (uses semantic Tailwind classes)
 
-**Activity page** (login required, own-only — 403 for other users, no admin override):
+**History page** (login required, own-only — 403 for other users, no admin override):
 - Segments for a given date, grouped into sessions (gap > 60 min = separate session)
 - Supports `?date=YYYY-MM-DD` query param, defaults to today
 - Newest session first, newest segment first within each session
-- Each segment is a mini-card: time range, duration, distance, calories, speed, MET, weight, incline (`—` when no sensor, `X.X%` otherwise — preserves the "no sensor" vs "sensor measured flat" distinction)
+- Each segment is a mini-card: time range, duration, distance, calories, speed, MET, weight, incline (`no incline` when null/0, `X.X% incline` otherwise — matches the leaderboard wording)
 - Gaps between segments shown as "paused X min Y sec" dividers
 - **Two-channel architecture** for smart DOM updates (today only):
-  - `GET /api/activity/{id}?date=` — closed segments, fetched on page load + `/ws/live` notifications
+  - `GET /api/history/{id}?date=` — closed segments, fetched on page load + `/ws/live` notifications
   - `/ws/live/{id}` — live segment pushed by server on every heartbeat and state change
-  - Closed segments rendered once into `#activity-closed`, not replaced on heartbeat
-  - Live segment updated in `#activity-live` without touching closed segments
+  - Closed segments rendered once into `#history-closed`, not replaced on heartbeat
+  - Live segment updated in `#history-live` without touching closed segments
   - Per-user WebSocket connected on page load only for today, auto-reconnects on disconnect
   - Historical dates show closed segments only (no WebSocket)
 
 **Login:** navigating to a login-required page while logged out redirects to `/login`. Login page is server-rendered with buttons for configured providers. After OAuth, `walker_id` cookie is set and user is redirected to `/`. Dev mode: "Dev Login" button available (no auto-login).
 
-**URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/activity/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load and shows the right content. Legacy `#hash` URLs redirect automatically.
+**URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/history/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load and shows the right content. Legacy `#hash` URLs redirect automatically.
 
 ### Database (PostgreSQL)
 

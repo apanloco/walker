@@ -161,7 +161,7 @@ async fn ws_live_user(
 }
 
 async fn handle_ws_live_user(mut socket: WebSocket, ctx: SharedLive, user_id: uuid::Uuid) {
-    info!(user_id = %user_id, "Activity viewer connected");
+    info!(user_id = %user_id, "Live viewer connected");
 
     // Get or create the per-user broadcast channel.
     let mut rx = {
@@ -188,13 +188,13 @@ async fn handle_ws_live_user(mut socket: WebSocket, ctx: SharedLive, user_id: uu
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                warn!(skipped = n, "Activity viewer lagging, skipped messages");
+                warn!(skipped = n, "Live viewer lagging, skipped messages");
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
     }
 
-    info!(user_id = %user_id, "Activity viewer disconnected");
+    info!(user_id = %user_id, "Live viewer disconnected");
 }
 
 /// Lightweight timer: checks for disconnected users every 5 seconds

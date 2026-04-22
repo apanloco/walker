@@ -6,7 +6,7 @@ Real-time treadmill tracking. Connect a Bluetooth walking machine, track your wa
 
 ## What It Does
 
-Walker connects to your Bluetooth treadmill, detects when you're actually walking (not just standing on the belt), and computes honest calories using research-backed MET values. Data streams to a server that powers a live dashboard with leaderboards, profiles, heatmaps, and detailed activity logs.
+Walker connects to your Bluetooth treadmill, detects when you're actually walking (not just standing on the belt), and computes honest calories using research-backed MET values. Data streams to a server that powers a live dashboard with leaderboards, profiles, heatmaps, and history.
 
 **Steps detect, speed measures, server computes.**
 
@@ -17,7 +17,7 @@ walker login                 # authenticate (opens browser)
 walker walk                  # connect to treadmill and start tracking
 ```
 
-Open the dashboard at https://walker.akerud.se to see your stats, compete on the leaderboard, and explore your activity history.
+Open the dashboard at https://walker.akerud.se to see your stats, compete on the leaderboard, and explore your walking history.
 
 ## Supported Devices
 
