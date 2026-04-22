@@ -203,7 +203,7 @@ details[open] summary::before { content: '−'; }
       <span class="logo-text font-bold text-base">Walker</span>
     </a>
     <a id="tab-leaderboard" href="/" class="nav-tab">Leaderboard</a>
-    <a id="tab-activity" href="/activity" class="nav-tab" style="display:none">Activity</a>
+    <a id="tab-history" href="/history" class="nav-tab" style="display:none">History</a>
     <a id="tab-faq" href="/faq" class="nav-tab">FAQ</a>
   </div>
   <div id="nav-user" class="flex items-center"></div>
@@ -244,11 +244,11 @@ details[open] summary::before { content: '−'; }
   <div id="profile-content" class="mt-4"></div>
 </div>
 
-<!-- Activity page -->
-<div id="page-activity" class="page px-6 pb-8 hidden">
-  <h2 id="activity-heading" class="text-lg font-bold text-white mt-4 mb-4">Today's Activity</h2>
-  <div id="activity-live" class="mb-2"></div>
-  <div id="activity-closed"></div>
+<!-- History page -->
+<div id="page-history" class="page px-6 pb-8 hidden">
+  <h2 id="history-heading" class="text-lg font-bold text-white mt-4 mb-4">Today</h2>
+  <div id="history-live" class="mb-2"></div>
+  <div id="history-closed"></div>
 </div>
 
 <!-- FAQ page -->
@@ -283,7 +283,7 @@ details[open] summary::before { content: '−'; }
       <details class="bg-surface-800 border border-gray-800 theme-panel">
         <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How private is my activity?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
-          <strong class="text-white">Right now, during development: it's effectively public.</strong> Login sessions are identified by a cookie that stores your user ID, and your user ID is published in the leaderboard API. Anyone who copies your ID into that cookie can open your Activity page and subscribe to your live feed — including <strong class="text-white">weight and speed</strong>. Proper session tokens are on the roadmap; until then, assume everything you walk is visible to anyone curious. The only thing genuinely hidden is your email (admins can see it).
+          <strong class="text-white">Right now, during development: it's effectively public.</strong> Login sessions are identified by a cookie that stores your user ID, and your user ID is published in the leaderboard API. Anyone who copies your ID into that cookie can open your History page and subscribe to your live feed — including <strong class="text-white">weight and speed</strong>. Proper session tokens are on the roadmap; until then, assume everything you walk is visible to anyone curious. The only thing genuinely hidden is your email (admins can see it).
         </div>
       </details>
 
@@ -326,7 +326,7 @@ details[open] summary::before { content: '−'; }
       </details>
 
       <details class="bg-surface-800 border border-gray-800 theme-panel">
-        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How are sessions split on the Activity page?</summary>
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How are sessions split on the History page?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
           A gap of more than 60 minutes between segments starts a new session. So if you walk in the morning and again after lunch, you'll see two session cards for the same day.
         </div>

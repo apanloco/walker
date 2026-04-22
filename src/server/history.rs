@@ -11,11 +11,11 @@ use sqlx::Row;
 use super::{db, live::SharedLive};
 
 pub fn routes() -> Router<SharedLive> {
-    Router::new().route("/api/activity/{id}", get(get_closed_segments))
+    Router::new().route("/api/history/{id}", get(get_closed_segments))
 }
 
 #[derive(Deserialize)]
-struct ActivityQuery {
+struct HistoryQuery {
     date: Option<String>,
 }
 
@@ -24,7 +24,7 @@ async fn get_closed_segments(
     State(ctx): State<SharedLive>,
     headers: axum::http::HeaderMap,
     Path(id_str): Path<String>,
-    Query(query): Query<ActivityQuery>,
+    Query(query): Query<HistoryQuery>,
 ) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
@@ -44,7 +44,7 @@ async fn get_closed_segments(
         return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
     };
 
-    // Activity is private — only the user themselves can view it.
+    // History is private — only the user themselves can view it.
     if caller != id {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -90,7 +90,7 @@ async fn get_closed_segments(
             axum::Json(serde_json::json!({ "segments": segments })).into_response()
         }
         Err(e) => {
-            tracing::error!(error = %e, "activity closed segments query failed");
+            tracing::error!(error = %e, "history closed segments query failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
