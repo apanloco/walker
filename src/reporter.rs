@@ -84,7 +84,11 @@ impl ServerReporter {
                 "Reporter send"
             );
         } else {
-            debug!(reason, elapsed_ms = format!("{:.0}", elapsed * 1000.0), "Reporter send");
+            debug!(
+                reason,
+                elapsed_ms = format!("{:.0}", elapsed * 1000.0),
+                "Reporter send"
+            );
         }
 
         // Rate summary every 10 seconds.

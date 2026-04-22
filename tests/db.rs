@@ -9,9 +9,10 @@ async fn met(pool: &PgPool, speed: f32) -> f32 {
         .unwrap()
 }
 
-/// Helper: query total_calories() from the database.
+/// Helper: query total_calories() from the database. Passes NULL incline
+/// (the default for devices without an incline sensor, equivalent to 0%).
 async fn total_cal(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f32 {
-    sqlx::query_scalar::<_, f32>("SELECT total_calories($1, $2, $3)")
+    sqlx::query_scalar::<_, f32>("SELECT total_calories($1, NULL, $2, $3)")
         .bind(speed)
         .bind(weight)
         .bind(duration)
@@ -20,9 +21,9 @@ async fn total_cal(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f32
         .unwrap()
 }
 
-/// Helper: query active_calories() from the database.
+/// Helper: query active_calories() from the database. Passes NULL incline.
 async fn active_cal(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f32 {
-    sqlx::query_scalar::<_, f32>("SELECT active_calories($1, $2, $3)")
+    sqlx::query_scalar::<_, f32>("SELECT active_calories($1, NULL, $2, $3)")
         .bind(speed)
         .bind(weight)
         .bind(duration)
@@ -145,23 +146,43 @@ async fn met_step_at_boundary(pool: PgPool) {
     );
 }
 
-// -- Calorie formulas --
+// -- MET model (direct, not via the active wrapper which now points at ACSM) --
+
+async fn total_cal_met(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f32 {
+    sqlx::query_scalar::<_, f32>("SELECT total_calories_met($1, NULL, $2, $3)")
+        .bind(speed)
+        .bind(weight)
+        .bind(duration)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn active_cal_met(pool: &PgPool, speed: f32, weight: f32, duration: f32) -> f32 {
+    sqlx::query_scalar::<_, f32>("SELECT active_calories_met($1, NULL, $2, $3)")
+        .bind(speed)
+        .bind(weight)
+        .bind(duration)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
 
 #[sqlx::test(migrations = "./migrations")]
-async fn calorie_formulas_correct(pool: PgPool) {
+async fn met_calorie_formulas_correct(pool: PgPool) {
     // 1 hour at 2.49 km/h (anchor, MET 2.8), 70 kg.
     // Total: 2.8 * 70 * 3600 / 3600 = 196 kcal
     // Active: (2.8 - 1) * 70 * 3600 / 3600 = 126 kcal
-    let total = total_cal(&pool, 2.49, 70.0, 3600.0).await;
+    let total = total_cal_met(&pool, 2.49, 70.0, 3600.0).await;
     assert!(
         (total - 196.0).abs() < 1.0,
-        "Total cal: expected ~196, got {total}"
+        "MET total cal: expected ~196, got {total}"
     );
 
-    let active = active_cal(&pool, 2.49, 70.0, 3600.0).await;
+    let active = active_cal_met(&pool, 2.49, 70.0, 3600.0).await;
     assert!(
         (active - 126.0).abs() < 1.0,
-        "Active cal: expected ~126, got {active}"
+        "MET active cal: expected ~126, got {active}"
     );
 }
 
@@ -175,6 +196,69 @@ async fn active_calories_less_than_total(pool: PgPool) {
             active < total,
             "Active ({active}) should be less than total ({total}) at {speed} km/h"
         );
-        assert!(active > 0.0, "Active calories should be positive at {speed} km/h");
+        assert!(
+            active > 0.0,
+            "Active calories should be positive at {speed} km/h"
+        );
     }
+}
+
+// -- ACSM model (direct, bypassing the env-var wrapper) --
+
+async fn active_acsm(pool: &PgPool, speed: f32, incline: f32, weight: f32, duration: f32) -> f32 {
+    sqlx::query_scalar::<_, f32>("SELECT active_calories_acsm($1, $2, $3, $4)")
+        .bind(speed)
+        .bind(incline)
+        .bind(weight)
+        .bind(duration)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acsm_matches_hand_derivation(pool: PgPool) {
+    // 4 km/h = 66.667 m/min. At 0% grade, active VO2 = 0.1 * 66.667 = 6.667 ml/kg/min.
+    // At 78 kg for 1 h: kcal = 6.667 * 78 * 3600 / 12000 = 156.0.
+    let kcal = active_acsm(&pool, 4.0, 0.0, 78.0, 3600.0).await;
+    assert!(
+        (kcal - 156.0).abs() < 1.0,
+        "ACSM active kcal/h at 4.0 km/h, 0%, 78 kg: expected ~156, got {kcal}"
+    );
+
+    // 4 km/h at 5% grade adds 1.8 * 66.667 * 0.05 = 6.0 ml/kg/min of grade term.
+    // Total active VO2 = 6.667 + 6.0 = 12.667. kcal = 12.667 * 78 * 3600 / 12000 = 296.4.
+    let kcal = active_acsm(&pool, 4.0, 5.0, 78.0, 3600.0).await;
+    assert!(
+        (kcal - 296.4).abs() < 1.0,
+        "ACSM active kcal/h at 4.0 km/h, 5%, 78 kg: expected ~296, got {kcal}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acsm_null_incline_equals_zero_incline(pool: PgPool) {
+    // Devices without an incline sensor send NULL. Calorie output must equal
+    // explicit 0% — this is the promise behind the NULL semantic.
+    let null_kcal: f32 = sqlx::query_scalar("SELECT active_calories_acsm($1, NULL, $2, $3)")
+        .bind(4.0_f32)
+        .bind(78.0_f32)
+        .bind(3600.0_f32)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let zero_kcal = active_acsm(&pool, 4.0, 0.0, 78.0, 3600.0).await;
+    assert!(
+        (null_kcal - zero_kcal).abs() < 0.01,
+        "NULL incline ({null_kcal}) must equal 0% incline ({zero_kcal})"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acsm_grows_with_incline(pool: PgPool) {
+    // At any nonzero speed, kcal must strictly increase with incline.
+    let level = active_acsm(&pool, 4.0, 0.0, 78.0, 3600.0).await;
+    let five = active_acsm(&pool, 4.0, 5.0, 78.0, 3600.0).await;
+    let ten = active_acsm(&pool, 4.0, 10.0, 78.0, 3600.0).await;
+    assert!(level < five, "0% ({level}) should be less than 5% ({five})");
+    assert!(five < ten, "5% ({five}) should be less than 10% ({ten})");
 }

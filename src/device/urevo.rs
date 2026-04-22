@@ -3,7 +3,9 @@ use btleplug::api::{Peripheral, WriteType};
 use tracing::debug;
 use uuid::Uuid;
 
-use super::{TreadmillCapabilities, TreadmillData, TreadmillEvent, TreadmillProfile, TreadmillStatus};
+use super::{
+    TreadmillCapabilities, TreadmillData, TreadmillEvent, TreadmillProfile, TreadmillStatus,
+};
 
 const UREVO_NOTIFY_UUID: Uuid = Uuid::from_u128(0x0000_fff1_0000_1000_8000_0080_5f9b_34fb);
 const UREVO_WRITE_UUID: Uuid = Uuid::from_u128(0x0000_fff2_0000_1000_8000_0080_5f9b_34fb);
@@ -267,9 +269,21 @@ mod tests {
     /// each (kmh, bytes) pair was a write the real app made to 0xFFF2.
     #[test]
     fn set_speed_cmd_matches_app_capture() {
-        assert_eq!(build_set_speed_cmd(1.0), [0x02, 0x53, 0x02, 0x0a, 0x00, 0x05, 0x03]);
-        assert_eq!(build_set_speed_cmd(1.1), [0x02, 0x53, 0x02, 0x0b, 0x00, 0x3a, 0x03]);
-        assert_eq!(build_set_speed_cmd(1.2), [0x02, 0x53, 0x02, 0x0c, 0x00, 0x3b, 0x03]);
-        assert_eq!(build_set_speed_cmd(1.3), [0x02, 0x53, 0x02, 0x0d, 0x00, 0x38, 0x03]);
+        assert_eq!(
+            build_set_speed_cmd(1.0),
+            [0x02, 0x53, 0x02, 0x0a, 0x00, 0x05, 0x03]
+        );
+        assert_eq!(
+            build_set_speed_cmd(1.1),
+            [0x02, 0x53, 0x02, 0x0b, 0x00, 0x3a, 0x03]
+        );
+        assert_eq!(
+            build_set_speed_cmd(1.2),
+            [0x02, 0x53, 0x02, 0x0c, 0x00, 0x3b, 0x03]
+        );
+        assert_eq!(
+            build_set_speed_cmd(1.3),
+            [0x02, 0x53, 0x02, 0x0d, 0x00, 0x38, 0x03]
+        );
     }
 }
