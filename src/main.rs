@@ -344,10 +344,7 @@ async fn probe(timeout: u64) -> anyhow::Result<()> {
     println!(
         "  {} {}",
         "Device:".bold(),
-        profile
-            .full_name(device_name.as_deref())
-            .green()
-            .bold()
+        profile.full_name(device_name.as_deref()).green().bold()
     );
     println!();
 
@@ -357,9 +354,7 @@ async fn probe(timeout: u64) -> anyhow::Result<()> {
             let min = u16::from_le_bytes([bytes[0], bytes[1]]) as f32 * 0.01;
             let max = u16::from_le_bytes([bytes[2], bytes[3]]) as f32 * 0.01;
             let inc = u16::from_le_bytes([bytes[4], bytes[5]]) as f32 * 0.01;
-            println!(
-                "  Speed range:     {min:.2} – {max:.2} km/h  (min step: {inc:.2})"
-            );
+            println!("  Speed range:     {min:.2} – {max:.2} km/h  (min step: {inc:.2})");
         } else {
             println!("  Speed range:     <{} bytes> {}", bytes.len(), hex(&bytes));
         }
@@ -373,9 +368,7 @@ async fn probe(timeout: u64) -> anyhow::Result<()> {
             let min = i16::from_le_bytes([bytes[0], bytes[1]]) as f32 * 0.1;
             let max = i16::from_le_bytes([bytes[2], bytes[3]]) as f32 * 0.1;
             let inc = u16::from_le_bytes([bytes[4], bytes[5]]) as f32 * 0.1;
-            println!(
-                "  Incline range:   {min:.1} – {max:.1} %     (min step: {inc:.1})"
-            );
+            println!("  Incline range:   {min:.1} – {max:.1} %     (min step: {inc:.1})");
         } else {
             println!("  Incline range:   <{} bytes> {}", bytes.len(), hex(&bytes));
         }
@@ -393,10 +386,7 @@ async fn probe(timeout: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "client")]
-async fn read_char(
-    device: &btleplug::platform::Peripheral,
-    uuid: uuid::Uuid,
-) -> Option<Vec<u8>> {
+async fn read_char(device: &btleplug::platform::Peripheral, uuid: uuid::Uuid) -> Option<Vec<u8>> {
     use btleplug::api::Peripheral;
     let services = device.services();
     let ch = services
@@ -486,7 +476,13 @@ async fn walk(timeout: u64, dev: bool, offline: bool, mut start: bool) -> anyhow
     let mut step_tracker = StepTracker::new();
     let mut activity_tracker = ActivityTracker::new();
     let mut lines_since_header: u32 = 0;
-    let mut last_display: Option<(TreadmillStatus, i32, u16, Option<u16>, activity::ActivityPhase)> = None;
+    let mut last_display: Option<(
+        TreadmillStatus,
+        i32,
+        u16,
+        Option<u16>,
+        activity::ActivityPhase,
+    )> = None;
     let mut last_status_only: Option<TreadmillStatus> = None;
 
     loop {

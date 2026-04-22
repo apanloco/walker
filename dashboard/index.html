@@ -152,12 +152,12 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
 
 .segment-row {
   display: grid;
-  grid-template-columns: 16px 120px 120px 90px 140px 80px 72px 56px;
+  grid-template-columns: 16px 120px 120px 90px 140px 80px 72px 56px 64px;
   align-items: center;
   gap: 0 14px;
 }
 .theme-c64 .segment-row {
-  grid-template-columns: 16px 150px 140px 100px 200px 100px 90px 65px;
+  grid-template-columns: 16px 150px 140px 100px 200px 100px 90px 65px 72px;
   gap: 0 16px;
 }
 
@@ -314,7 +314,7 @@ details[open] summary::before { content: '−'; }
       <details class="bg-surface-800 border border-gray-800 theme-panel">
         <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Why don't steps count toward calories?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
-          Three reasons: step length varies with speed; calorie burn depends on speed (via MET), not raw step count; and some treadmills (FTMS-based) don't report steps at all. Our rule: <strong class="text-white">steps detect, speed measures, server computes</strong>.
+          Three reasons: step length varies with speed; calorie burn depends on speed, incline, weight, and time, not raw step count; and some treadmills (FTMS-based) don't report steps at all. Our rule: <strong class="text-white">steps detect, speed measures, server computes</strong>.
         </div>
       </details>
 
@@ -343,23 +343,16 @@ details[open] summary::before { content: '−'; }
       </details>
 
       <details class="bg-surface-800 border border-gray-800 theme-panel">
-        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">What is MET?</summary>
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How are calories calculated?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
-          MET (Metabolic Equivalent of Task) is a standard unit for how hard an activity is. 1 MET = sitting still, 2 MET = twice that intensity. We look up a MET value from your treadmill speed using the <a href="https://pacompendium.com/walking/" class="text-walker-500 hover:underline">Compendium of Physical Activities (2024)</a>, then compute: <code>MET × weight × time = calories</code>.
-        </div>
-      </details>
-
-      <details class="bg-surface-800 border border-gray-800 theme-panel">
-        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Why do 1.0 km/h and 1.5 km/h give the same MET?</summary>
-        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
-          The Compendium lumps everything below 1.0 mph (≈1.61 km/h) into a single "very slow walking" bucket at MET 2.1. Both 1.0 and 1.5 km/h fall inside that bucket, so they resolve to the same value. We stay faithful to the published table rather than inventing sub-bucket interpolation that isn't in the source.
+          Walker uses the <strong class="text-white">ACSM walking equation</strong>. In plain terms: your calorie estimate comes from <strong class="text-white">speed + incline + weight + time</strong>. Faster walking burns more. Steeper incline burns more. Your configured weight scales the result. That gives a better treadmill estimate than a flat speed-only model, especially once incline changes enter the picture.
         </div>
       </details>
 
       <details class="bg-surface-800 border border-gray-800 theme-panel">
         <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How accurate are the calories?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
-          The main variable is your weight. The default is 70 kg — if yours differs, set it. Your weight is snapshotted onto each segment when it's created, so updating your weight doesn't rewrite history; it just affects future segments.
+          Walker estimates calories from your speed, incline, duration, and configured weight. The biggest user-specific variable is weight. The default is 70 kg — if yours differs, set it. Your weight is snapshotted onto each segment when it's created, so updating your weight doesn't rewrite history; it just affects future segments.
         </div>
       </details>
 

@@ -6,7 +6,9 @@ use axum::{
     routing::{post, put},
 };
 use serde::Deserialize;
-use tower_governor::{GovernorLayer, GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor};
+use tower_governor::{
+    GovernorError, GovernorLayer, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
+};
 use tracing::{debug, error, warn};
 
 use super::db;
@@ -48,6 +50,10 @@ pub fn routes() -> Router<SharedLive> {
 struct UpdatePayload {
     state: String, // "walking", "idle", "stopped"
     speed_kmh: f64,
+    /// Grade as a percent (5.0 = 5%). Omitted by devices without an incline
+    /// sensor; stored as NULL and treated as 0% by calorie functions.
+    #[serde(default)]
+    incline_percent: Option<f64>,
 }
 
 async fn handle_update(
@@ -76,11 +82,15 @@ async fn handle_update(
         }
     };
 
-    // Determine if state changed.
+    // Determine if state changed. Incline is compared with NULL/None mapped
+    // to 0.0 so devices without an incline sensor don't flap.
+    let incline_delta =
+        (seg_incline_or_zero(&open_seg) - payload.incline_percent.unwrap_or(0.0)).abs();
     let state_changed = match &open_seg {
         Some(seg) => {
             seg.moving != moving
                 || (moving && (seg.speed_kmh - payload.speed_kmh).abs() > 0.05)
+                || (moving && incline_delta > 0.05)
                 || stopped
         }
         None => !stopped, // No open segment and not stopped → need to open one
@@ -97,10 +107,14 @@ async fn handle_update(
         {
             let seg = open_seg.as_ref().unwrap();
             if db::delete_segment(pool, seg.id).await.unwrap_or(false) {
-                let reopened =
-                    db::reopen_previous_walking_segment(pool, user.id, payload.speed_kmh)
-                        .await
-                        .unwrap_or(false);
+                let reopened = db::reopen_previous_walking_segment(
+                    pool,
+                    user.id,
+                    payload.speed_kmh,
+                    payload.incline_percent,
+                )
+                .await
+                .unwrap_or(false);
                 if reopened {
                     // Recalculate duration/calories/distance immediately so the
                     // WebSocket push below sends fresh values (not stale pre-close ones).
@@ -129,8 +143,15 @@ async fn handle_update(
             // Open new segment unless stopped.
             if !stopped {
                 let weight = db::get_user_weight(pool, user.id).await.unwrap_or(70.0);
-                if let Err(e) =
-                    db::open_segment(pool, user.id, moving, payload.speed_kmh, weight).await
+                if let Err(e) = db::open_segment(
+                    pool,
+                    user.id,
+                    moving,
+                    payload.speed_kmh,
+                    payload.incline_percent,
+                    weight,
+                )
+                .await
                 {
                     warn!(error = %e, "Failed to open segment");
                 }
@@ -197,4 +218,12 @@ fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")
+}
+
+/// Map the open segment's incline (or absence of one) to a comparable number.
+fn seg_incline_or_zero(open_seg: &Option<db::OpenSegment>) -> f64 {
+    open_seg
+        .as_ref()
+        .and_then(|s| s.incline_percent)
+        .unwrap_or(0.0)
 }

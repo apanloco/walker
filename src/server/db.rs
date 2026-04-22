@@ -134,6 +134,7 @@ pub struct OpenSegment {
     pub id: i64,
     pub moving: bool,
     pub speed_kmh: f64,
+    pub incline_percent: Option<f64>,
     /// How many seconds ago this segment started (computed by the DB).
     pub age_secs: f64,
 }
@@ -144,7 +145,7 @@ pub async fn get_open_segment(
     user_id: uuid::Uuid,
 ) -> anyhow::Result<Option<OpenSegment>> {
     let row = sqlx::query(
-        "SELECT id, moving, speed_kmh,
+        "SELECT id, moving, speed_kmh, incline_percent,
                 EXTRACT(EPOCH FROM now() - started_at)::REAL AS age_secs
          FROM segments WHERE user_id = $1 AND open = true",
     )
@@ -156,6 +157,7 @@ pub async fn get_open_segment(
         id: r.get("id"),
         moving: r.get("moving"),
         speed_kmh: r.get::<f32, _>("speed_kmh") as f64,
+        incline_percent: r.get::<Option<f32>, _>("incline_percent").map(|v| v as f64),
         age_secs: r.get::<f32, _>("age_secs") as f64,
     }))
 }
@@ -166,16 +168,18 @@ pub async fn open_segment(
     user_id: uuid::Uuid,
     moving: bool,
     speed_kmh: f64,
+    incline_percent: Option<f64>,
     weight_kg: f64,
 ) -> anyhow::Result<i64> {
     let row = sqlx::query(
-        "INSERT INTO segments (user_id, started_at, moving, speed_kmh, weight_kg)
-         VALUES ($1, NOW(), $2, $3, $4)
+        "INSERT INTO segments (user_id, started_at, moving, speed_kmh, incline_percent, weight_kg)
+         VALUES ($1, NOW(), $2, $3, $4, $5)
          RETURNING id",
     )
     .bind(user_id)
     .bind(moving)
     .bind(speed_kmh as f32)
+    .bind(incline_percent.map(|v| v as f32))
     .bind(weight_kg as f32)
     .fetch_one(pool)
     .await?;
@@ -201,12 +205,13 @@ pub async fn delete_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<bo
 }
 
 /// Try to reopen the most recent closed walking segment for a user, if it was
-/// active recently and at the same speed. Used to absorb false idle blips.
-/// Returns true if a segment was reopened.
+/// active recently and at the same speed and incline. Used to absorb false
+/// idle blips. Returns true if a segment was reopened.
 pub async fn reopen_previous_walking_segment(
     pool: &PgPool,
     user_id: uuid::Uuid,
     speed_kmh: f64,
+    incline_percent: Option<f64>,
 ) -> anyhow::Result<bool> {
     let result = sqlx::query(
         "UPDATE segments
@@ -218,22 +223,22 @@ pub async fn reopen_previous_walking_segment(
                AND moving = true
                AND last_heartbeat_at > now() - make_interval(secs => $2)
                AND abs(speed_kmh - $3) < 0.05
+               AND abs(COALESCE(incline_percent, 0.0) - COALESCE($4, 0.0)) < 0.05
              ORDER BY started_at DESC LIMIT 1
          )",
     )
     .bind(user_id)
     .bind(MAX_ABSORB_REOPEN_WINDOW_SECS)
     .bind(speed_kmh as f32)
+    .bind(incline_percent.map(|v| v as f32))
     .execute(pool)
     .await?;
     Ok(result.rows_affected() > 0)
 }
 
-/// Recompute a segment's duration and distance from a given end-time expression.
-/// Calories are computed at query time via SQL functions — not stored.
-///   - `end_time`: SQL expression for the segment's end time (e.g. "now()" or "last_heartbeat_at")
-///   - `extra_sets`: additional SET clauses (e.g. "open = false")
-/// Close a segment: compute final values and mark as closed.
+/// Close a segment by computing its final duration and distance, then marking it
+/// closed. Calories are computed at query time via SQL functions rather than
+/// stored on the row.
 pub async fn close_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE segments SET
@@ -329,14 +334,21 @@ pub async fn close_stale_segments(
     Ok(user_ids)
 }
 
-/// Get live status (moving, speed, active kcal/h) for all users with open segments.
-/// Active kcal/h = (MET - 1) × weight_kg — the per-hour burn rate above resting.
-pub async fn get_live_statuses(
-    pool: &PgPool,
-) -> anyhow::Result<HashMap<uuid::Uuid, (bool, f64, f64)>> {
+/// Live status for one user with an open segment.
+pub struct LiveStatus {
+    pub moving: bool,
+    pub speed_kmh: f64,
+    pub active_kcal_per_h: f64,
+    /// `None` when the device doesn't report incline.
+    pub incline_percent: Option<f64>,
+}
+
+/// Get live status for all users with open segments.
+pub async fn get_live_statuses(pool: &PgPool) -> anyhow::Result<HashMap<uuid::Uuid, LiveStatus>> {
     let rows = sqlx::query(
-        "SELECT s.user_id, s.moving, s.speed_kmh,
-                (met_for_speed(s.speed_kmh) - 1) * s.weight_kg AS active_kcal_per_h
+        "SELECT s.user_id, s.moving, s.speed_kmh, s.incline_percent,
+                active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, 3600.0::REAL)::DOUBLE PRECISION
+                  AS active_kcal_per_h
          FROM segments s WHERE s.open = true",
     )
     .fetch_all(pool)
@@ -346,10 +358,15 @@ pub async fn get_live_statuses(
         .iter()
         .map(|r| {
             let user_id: uuid::Uuid = r.get("user_id");
-            let moving: bool = r.get("moving");
-            let speed: f32 = r.get("speed_kmh");
-            let kcal_per_h: f64 = r.get("active_kcal_per_h");
-            (user_id, (moving, speed as f64, kcal_per_h))
+            (
+                user_id,
+                LiveStatus {
+                    moving: r.get("moving"),
+                    speed_kmh: r.get::<f32, _>("speed_kmh") as f64,
+                    active_kcal_per_h: r.get("active_kcal_per_h"),
+                    incline_percent: r.get::<Option<f32>, _>("incline_percent").map(|v| v as f64),
+                },
+            )
         })
         .collect())
 }
@@ -361,10 +378,9 @@ pub async fn get_current_segment_json(
     user_id: uuid::Uuid,
 ) -> anyhow::Result<String> {
     let row = sqlx::query(
-        "SELECT started_at::TEXT, moving, speed_kmh, duration_s, weight_kg,
-                total_calories(speed_kmh, weight_kg, duration_s) AS calories_kcal,
-                active_calories(speed_kmh, weight_kg, duration_s) AS active_calories_kcal,
-                met_for_speed(speed_kmh) AS met,
+        "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
+                total_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS calories_kcal,
+                active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
                 distance_m
          FROM segments
          WHERE user_id = $1 AND open = true",
@@ -380,11 +396,11 @@ pub async fn get_current_segment_json(
                     "started_at": r.get::<String, _>("started_at"),
                     "moving": r.get::<bool, _>("moving"),
                     "speed_kmh": r.get::<f32, _>("speed_kmh"),
+                    "incline_percent": r.get::<Option<f32>, _>("incline_percent"),
                     "duration_s": r.get::<f32, _>("duration_s"),
                     "weight_kg": r.get::<f32, _>("weight_kg"),
                     "calories_kcal": r.get::<f32, _>("calories_kcal"),
                     "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
-                    "met": r.get::<f32, _>("met"),
                     "distance_m": r.get::<f32, _>("distance_m"),
                     "open": true,
                 }
@@ -482,8 +498,8 @@ pub async fn user_history(
 ) -> anyhow::Result<Vec<DailySnapshot>> {
     let rows = sqlx::query(
         "SELECT started_at::date::TEXT AS date,
-                COALESCE(SUM(total_calories(speed_kmh, weight_kg, duration_s)), 0)::REAL AS total_kcal,
-                COALESCE(SUM(active_calories(speed_kmh, weight_kg, duration_s)), 0)::REAL AS active_kcal,
+                COALESCE(SUM(total_calories(speed_kmh, incline_percent, weight_kg, duration_s)), 0)::REAL AS total_kcal,
+                COALESCE(SUM(active_calories(speed_kmh, incline_percent, weight_kg, duration_s)), 0)::REAL AS active_kcal,
                 COALESCE(SUM(distance_m), 0)::REAL AS total_dist,
                 COALESCE(SUM(duration_s), 0)::REAL AS total_dur
          FROM segments
@@ -553,12 +569,12 @@ async fn query_leaderboard(
 ) -> anyhow::Result<Vec<LeaderboardEntry>> {
     let sql = format!(
         "SELECT u.id, u.display_name AS name, u.avatar_url,
-                COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS total_kcal,
-                COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
+                COALESCE(SUM(total_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0)::REAL AS total_kcal,
+                COALESCE(SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
                 (COALESCE(SUM(s.distance_m), 0) / 1000.0)::REAL AS distance_km
          FROM users u LEFT JOIN segments s ON u.id = s.user_id AND s.moving = true {date_filter}
          GROUP BY u.id, u.display_name, u.avatar_url
-         HAVING COALESCE(SUM(total_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0) > 0
+         HAVING COALESCE(SUM(total_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0) > 0
          ORDER BY total_kcal DESC LIMIT 10"
     );
 
@@ -604,11 +620,11 @@ pub async fn leaderboard_daily_winners(pool: &PgPool) -> anyhow::Result<Vec<Dail
          FROM (
            SELECT s.started_at::date::TEXT AS date, u.id AS user_id,
                   u.display_name AS name, u.avatar_url,
-                  COALESCE(SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
+                  COALESCE(SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
                   (COALESCE(SUM(s.distance_m), 0) / 1000.0)::REAL AS distance_km,
                   ROW_NUMBER() OVER (
                     PARTITION BY s.started_at::date
-                    ORDER BY SUM(active_calories(s.speed_kmh, s.weight_kg, s.duration_s)) DESC
+                    ORDER BY SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)) DESC
                   ) AS rn
            FROM segments s JOIN users u ON u.id = s.user_id
            WHERE s.moving = true

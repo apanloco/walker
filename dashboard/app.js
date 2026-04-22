@@ -185,15 +185,40 @@ function rankBadge(i) {
   return '<span class="text-gray-600">' + (i + 1) + '</span>';
 }
 
+// Muted pipe separator for the live status row. Kept low-contrast so the
+// themed numbers on either side remain the visual focus.
+const SEP = ' <span class="text-gray-600">|</span> ';
+
+// "no incline" for null/zero; "X.X% incline" otherwise. Applied on the
+// leaderboard for a quick-glance "is this user on a climb" hint.
+function inclineLabel(pct) {
+  if (pct == null || pct === 0) return 'no incline';
+  return pct.toFixed(1) + '% incline';
+}
+
+// Per-segment incline cell on the activity page. Distinguishes "no sensor"
+// (—) from "sensor reported 0%" (0.0%) so the audit view is honest.
+function formatIncline(pct) {
+  if (pct == null) return '—';
+  return pct.toFixed(1) + '%';
+}
+
 function statusIndicator(e) {
   if (e.status === 'walking') {
-    const kph = e.active_kcal_per_h ? ' (' + e.active_kcal_per_h.toFixed(1) + ' kcal/h)' : '';
+    const parts = [e.speed_kmh.toFixed(1) + ' km/h'];
+    if (e.active_kcal_per_h) parts.push(e.active_kcal_per_h.toFixed(1) + ' kcal/h');
+    parts.push(inclineLabel(e.incline_percent));
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-walking mr-1.5 live-blink"></span>' +
-      '<span class="text-status-walking text-xs">' + e.speed_kmh.toFixed(1) + ' km/h' + kph + '</span>';
+      '<span class="text-status-walking text-xs">' + parts.join(SEP) + '</span>';
   }
   if (e.status === 'idle') {
+    // Only surface incline when it matters (nonzero). "Idle | no incline"
+    // would just be noise on a row that already says the user isn't moving.
+    const suffix = (e.incline_percent != null && e.incline_percent !== 0)
+      ? SEP + e.incline_percent.toFixed(1) + '% incline'
+      : '';
     return '<span class="inline-block w-2 h-2 rounded-full bg-status-idle mr-1.5"></span>' +
-      '<span class="text-status-idle text-xs">Idle</span>';
+      '<span class="text-status-idle text-xs">Idle' + suffix + '</span>';
   }
   return '';
 }
@@ -845,7 +870,7 @@ function renderLiveSegment(seg) {
 function renderSegmentCard(seg) {
   const dur = seg.duration_s;
   if (seg.moving) {
-    const kcalPerH = (seg.met - 1) * seg.weight_kg;
+    const kcalPerH = dur > 0 ? (seg.active_calories_kcal * 3600) / dur : 0;
     const segStart = new Date(seg.started_at);
     const segEnd = new Date(segStart.getTime() + dur * 1000);
     let html = '<div class="bg-surface-900/50 rounded-lg px-4 py-2.5 border border-gray-800/50">';
@@ -860,6 +885,7 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-500" style="grid-column:6">' + seg.speed_kmh.toFixed(1) + ' km/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:7">' + kcalPerH.toFixed(1) + ' kcal/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
+    html += '<span class="text-gray-600 text-xs" style="grid-column:9">' + formatIncline(seg.incline_percent) + '</span>';
     html += '</div>';
     html += '</div>';
     return html;
