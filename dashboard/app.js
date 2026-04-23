@@ -505,6 +505,12 @@ function buildFoodRow(label, kcal) {
 }
 
 function renderProfile(p) {
+  const stravaFormOpen = !document.getElementById('strava-connect-form')?.classList.contains('hidden');
+  const stravaFormState = stravaFormOpen ? {
+    clientId: document.getElementById('strava-client-id')?.value || '',
+    clientSecret: document.getElementById('strava-client-secret')?.value || '',
+    focusedId: document.activeElement?.id || null,
+  } : null;
   const el = document.getElementById('profile-content');
 
   const last7 = p.last_7_days || [];
@@ -624,7 +630,63 @@ function renderProfile(p) {
       ${buildFoodRow('This Year', periods.year_active_kcal || 0)}
       ${buildFoodRow('All Time', periods.all_time_active_kcal || 0)}
     </div>
+
+    ${currentProfileId === loggedInId ? `
+    <!-- Connections (own profile only) -->
+    <div class="bg-surface-800 rounded-xl p-5 border border-gray-800 mt-6">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Connections</h3>
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <span class="font-bold text-sm" style="color: #fc4c02">Strava</span>
+            ${p.strava_connected ? '<span class="text-gray-500 text-xs">Connected</span>' : '<span class="text-gray-600 text-xs">Not connected</span>'}
+            <span class="text-gray-500 text-xs" id="strava-status"></span>
+          </div>
+          <div class="flex gap-4">
+            ${p.strava_connected
+              ? '<button onclick="stravaSync()" class="text-xs text-walker-500 hover:text-walker-600 font-medium">Sync</button>' +
+                '<button onclick="stravaDisconnect()" class="text-xs text-gray-500 hover:text-red-400">Disconnect</button>'
+              : '<button onclick="stravaShowForm()" class="text-xs text-walker-500 hover:text-walker-600 font-medium">Connect</button>'
+            }
+          </div>
+        </div>
+        ${!p.strava_connected ? `
+        <div id="strava-connect-form" class="hidden mt-3 border-t border-gray-700 pt-3 space-y-3">
+          <p class="text-xs text-gray-500">
+            You need your own <a href="https://www.strava.com/settings/api" target="_blank" class="text-walker-500 underline">Strava API app</a>.
+            Set "Authorization Callback Domain" to <code class="text-gray-300">${location.hostname}</code>.
+          </p>
+          <div class="flex gap-2 flex-wrap">
+            <input id="strava-client-id" type="text" placeholder="Client ID" class="flex-1 min-w-0 bg-surface-900 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-walker-500" />
+            <input id="strava-client-secret" type="password" placeholder="Client Secret" class="flex-1 min-w-0 bg-surface-900 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-walker-500" />
+          </div>
+          <button onclick="stravaOpenAuth()" id="strava-auth-btn" class="text-xs bg-walker-600 hover:bg-walker-700 text-white px-3 py-1.5 rounded font-medium">Authorize on Strava ↗</button>
+          <p class="text-xs text-gray-500 hidden" id="strava-waiting">Waiting for Strava authorization…</p>
+          <p class="text-xs text-red-400 hidden" id="strava-error"></p>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+    ` : ''}
   `;
+
+  // Restore connect form state across re-renders so a live update doesn't wipe what the user typed.
+  if (stravaFormState) {
+    const form = document.getElementById('strava-connect-form');
+    if (form) {
+      form.classList.remove('hidden');
+      document.getElementById('strava-client-id').value = stravaFormState.clientId;
+      document.getElementById('strava-client-secret').value = stravaFormState.clientSecret;
+      // If OAuth is in progress (credentials stored), restore the waiting state.
+      if (sessionStorage.getItem('strava_client_id')) {
+        const waitingEl = document.getElementById('strava-waiting');
+        if (waitingEl) waitingEl.classList.remove('hidden');
+        const btn = document.getElementById('strava-auth-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Waiting…'; }
+      }
+      if (stravaFormState.focusedId) document.getElementById(stravaFormState.focusedId)?.focus();
+    }
+  }
 
   // Render emojis consistently with Twemoji.
   if (window.twemoji) twemoji.parse(el);
@@ -870,6 +932,10 @@ function renderSegmentCard(seg) {
     html += '<div class="segment-row text-sm">';
     if (seg.open) {
       html += '<div class="w-2.5 h-2.5 rounded-full bg-status-walking flex-shrink-0 live-blink" style="grid-column:1"></div>';
+    } else if (seg.source === 'strava') {
+      const title = seg.activity_name ? esc(seg.activity_name) : 'Strava';
+      const href = seg.source_url ? ' href="' + esc(seg.source_url) + '" target="_blank" rel="noopener"' : '';
+      html += '<a' + href + ' title="' + title + '" style="grid-column:1;color:#fc4c02;font-weight:700;font-size:0.65rem;text-decoration:none;align-self:center">Strava</a>';
     }
     html += '<span class="text-gray-400" style="grid-column:2">' + formatTime(segStart) + '–' + formatTime(segEnd) + '</span>';
     html += '<span class="text-white font-medium" style="grid-column:3">' + formatDurationLong(dur) + '</span>';
@@ -879,6 +945,9 @@ function renderSegmentCard(seg) {
     html += '<span class="text-gray-600 text-xs" style="grid-column:7">' + kcalPerH.toFixed(1) + ' kcal/h</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:8">' + seg.weight_kg.toFixed(0) + ' kg</span>';
     html += '<span class="text-gray-600 text-xs" style="grid-column:9">' + inclineLabel(seg.incline_percent) + '</span>';
+    if (seg.activity_id) {
+      html += '<a href="/api/activity/raw/' + seg.activity_id + '" target="_blank" class="text-xs text-white hover:text-gray-300" style="grid-column:10">raw</a>';
+    }
     html += '</div>';
     html += '</div>';
     return html;
@@ -888,6 +957,52 @@ function renderSegmentCard(seg) {
     html += '</div>';
     return html;
   }
+}
+
+function stravaShowForm() {
+  const form = document.getElementById('strava-connect-form');
+  if (form) form.classList.toggle('hidden');
+}
+
+function stravaOpenAuth() {
+  const clientId = document.getElementById('strava-client-id')?.value.trim();
+  const clientSecret = document.getElementById('strava-client-secret')?.value.trim();
+  const errorEl = document.getElementById('strava-error');
+  if (!clientId || !clientSecret) {
+    if (errorEl) { errorEl.textContent = 'Enter your Client ID and Client Secret first.'; errorEl.classList.remove('hidden'); }
+    return;
+  }
+  if (errorEl) errorEl.classList.add('hidden');
+  sessionStorage.setItem('strava_client_id', clientId);
+  sessionStorage.setItem('strava_client_secret', clientSecret);
+  const waitingEl = document.getElementById('strava-waiting');
+  if (waitingEl) waitingEl.classList.remove('hidden');
+  const btn = document.getElementById('strava-auth-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Waiting…'; }
+  const redirectUri = encodeURIComponent(location.origin + '/strava-auth');
+  const url = `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${redirectUri}&approval_prompt=force&scope=activity:read_all`;
+  window.open(url, '_blank');
+}
+
+function stravaSync() {
+  const statusEl = document.getElementById('strava-status');
+  if (statusEl) statusEl.textContent = 'Syncing…';
+  fetch('/api/strava/sync', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (statusEl) statusEl.textContent = data.imported > 0 ? data.imported + ' imported' : 'Up to date';
+      if (data.imported > 0) fetchProfile();
+    })
+    .catch(() => {
+      if (statusEl) statusEl.textContent = 'Sync failed';
+    });
+}
+
+function stravaDisconnect() {
+  if (!confirm('Disconnect Strava? Your imported activities will be kept.')) return;
+  fetch('/auth/strava/disconnect', { method: 'POST' })
+    .then(r => { if (r.ok) fetchProfile(); })
+    .catch(e => console.error('Strava disconnect failed:', e));
 }
 
 function formatDurationLong(secs) {
@@ -932,6 +1047,56 @@ function connect() {
 
 // Leaderboard polls on its own schedule, independent of WebSocket.
 setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
+
+// -- Strava OAuth code receiver --
+// /strava-auth broadcasts {stravaCode} via BroadcastChannel (same-origin, no
+// window.opener required). postMessage to opener is kept as a fallback.
+// The channel reference is stored explicitly — browsers may GC objects with no
+// live reference even if they have an onmessage handler (observed on Safari).
+function handleStravaCode(code) {
+  const clientId = sessionStorage.getItem('strava_client_id');
+  const clientSecret = sessionStorage.getItem('strava_client_secret');
+  const errorEl = document.getElementById('strava-error');
+  const waitingEl = document.getElementById('strava-waiting');
+  if (!clientId || !clientSecret) {
+    if (errorEl) { errorEl.textContent = 'Session expired — please try again.'; errorEl.classList.remove('hidden'); }
+    if (waitingEl) waitingEl.classList.add('hidden');
+    const btn = document.getElementById('strava-auth-btn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Authorize on Strava ↗'; }
+    return;
+  }
+  if (waitingEl) waitingEl.textContent = 'Connecting…';
+  fetch('/auth/strava/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+  })
+    .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+    .then(() => {
+      sessionStorage.removeItem('strava_client_id');
+      sessionStorage.removeItem('strava_client_secret');
+      fetchProfile();
+    })
+    .catch(e => {
+      sessionStorage.removeItem('strava_client_id');
+      sessionStorage.removeItem('strava_client_secret');
+      if (waitingEl) waitingEl.classList.add('hidden');
+      const btn = document.getElementById('strava-auth-btn');
+      if (btn) { btn.disabled = false; btn.textContent = 'Authorize on Strava ↗'; }
+      if (errorEl) { errorEl.textContent = String(e) || 'Connection failed.'; errorEl.classList.remove('hidden'); }
+    });
+}
+var _stravaBC = null;
+try {
+  _stravaBC = new BroadcastChannel('strava-auth');
+  _stravaBC.onmessage = function(ev) {
+    if (ev.data && ev.data.stravaCode) handleStravaCode(ev.data.stravaCode);
+  };
+} catch(e) {}
+window.addEventListener('message', function(event) {
+  if (event.origin !== location.origin) return;
+  if (event.data && event.data.stravaCode) handleStravaCode(event.data.stravaCode);
+});
 
 // -- Init --
 initPage();
