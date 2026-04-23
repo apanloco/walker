@@ -143,6 +143,8 @@ async fn get_profile(
         .sum();
     let year_active_cal: f64 = year_history.iter().map(|d| d.active_calories_kcal).sum();
 
+    let strava_connected = db::strava_connected(pool, id).await.unwrap_or(false);
+
     // Check if currently walking via open segment in DB.
     let live_status = match db::get_open_segment(pool, id).await {
         Ok(Some(seg)) => {
@@ -155,6 +157,7 @@ async fn get_profile(
     let mut resp = serde_json::json!({
         "id": id_str,
         "name": name,
+        "strava_connected": strava_connected,
         "avatar_url": avatar,
         "weight_kg": weight,
         "member_since": member_since,

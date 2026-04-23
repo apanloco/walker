@@ -152,12 +152,12 @@ img.emoji { display: inline; height: 1.2em; width: 1.2em; vertical-align: -0.2em
 
 .segment-row {
   display: grid;
-  grid-template-columns: 16px 120px 120px 90px 140px 80px 72px 56px 64px;
+  grid-template-columns: 40px 120px 120px 90px 140px 80px 72px 56px 64px 32px;
   align-items: center;
   gap: 0 14px;
 }
 .theme-c64 .segment-row {
-  grid-template-columns: 16px 150px 140px 100px 200px 100px 90px 65px 72px;
+  grid-template-columns: 40px 150px 140px 100px 200px 100px 90px 65px 72px 36px;
   gap: 0 16px;
 }
 
@@ -310,6 +310,58 @@ details[open] summary::before { content: '−'; }
         <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How is the daily winner picked?</summary>
         <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
           Whoever burned the most active kcal on that UTC day. Today's winner updates live while people are still walking; past days are frozen once the UTC day ends.
+        </div>
+      </details>
+    </div>
+
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-10 mb-3">Strava</h2>
+    <div class="space-y-2">
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">How do I connect my Strava account?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Walker uses your own Strava API app rather than a shared one, so there's a short setup:
+          <ol class="list-decimal list-inside mt-2 space-y-1">
+            <li>Create a free app at <strong class="text-white">strava.com/settings/api</strong> and set the Authorization Callback Domain to <strong class="text-white">walker.akerud.se</strong>.</li>
+            <li>On your Walker profile (avatar menu → Profile), scroll to <strong class="text-white">Connections</strong> and click <strong class="text-white">Connect</strong>.</li>
+            <li>Enter your Client ID and Client Secret, then click <strong class="text-white">Authorize on Strava</strong> — a new tab opens.</li>
+            <li>After authorizing in the new tab, Walker captures the code automatically and connects. The tab closes itself.</li>
+          </ol>
+          Walker only requests read access to your activities — it cannot post or modify anything on Strava.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Which Strava activities are imported?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          <strong class="text-white">Walk</strong>, <strong class="text-white">Hike</strong>, <strong class="text-white">Run</strong>, and <strong class="text-white">VirtualRun</strong> — both indoor and outdoor. Rides, swims, TrailRun, and everything else are ignored. Each imported activity becomes one closed segment using the activity's average speed and moving time.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">When do Strava activities appear in Walker?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Activities are not pushed automatically. They appear when you click the <strong class="text-white">Sync</strong> button on your profile, or on the next server restart (Walker catches up any missed activities automatically on startup). There is no live feed from Strava — only treadmill sessions via the Walker CLI appear live.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Will connecting Strava import my full history?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          No. Walker only starts importing from the moment you connect — no backfill of past activities. Use the <strong class="text-white">Sync</strong> button whenever you want to pull in recent activities. It looks back to the most recent activity already in Walker, so repeated syncs are safe and won't create duplicates.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Are Strava segments shown differently on the Activity page?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          Yes — they show an orange <strong class="text-white">S</strong> icon at the start of the segment row, linked to the activity on Strava. Hover the icon to see the activity name. Calories and distance are calculated exactly the same way as treadmill segments: MET lookup from average speed × weight × time. They count toward the leaderboard, heatmap, and all stats.
+        </div>
+      </details>
+
+      <details class="bg-surface-800 border border-gray-800 theme-panel">
+        <summary class="cursor-pointer p-4 font-medium text-white hover:text-walker-500">Are Strava activities shown live?</summary>
+        <div class="faq-answer px-4 pb-4 pl-10 text-sm text-gray-300 leading-relaxed">
+          No. Strava activities arrive as finished, closed segments — there's no live feed. Only treadmill sessions connected via the Walker CLI appear as live data on the dashboard.
         </div>
       </details>
     </div>

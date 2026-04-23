@@ -17,6 +17,7 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 1. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
 2. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
 3. **Dashboard: stop polling when idle** — While on the leaderboard page, `fetchLeaderboard` polls every 5s via `setInterval` even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible. (Profile/history/FAQ pages no longer poll — see `currentPage === 'leaderboard'` gate in `app.js`.)
+4. **Phase out total kcal** — The platform should show active kcal only. Remove total kcal from: leaderboard hover tooltip, profile stats, and any other UI surfaces. Active kcal is the meaningful number; total kcal includes resting metabolic rate which just adds noise. Server can keep computing both for API backwards compatibility, but the dashboard should stop exposing total.
 
 ## License
 
@@ -54,6 +55,7 @@ src/
     leaderboard.rs — GET /api/leaderboard with live status merge
     day.rs         — GET /api/day/{date} per-user segments for the day chart
     profile.rs     — GET /api/profile/{id} with year history, records, periods
+    strava.rs      — Strava account linking, activity import, webhook handler
 dashboard/
   index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, history pages
   app.js           — leaderboard, profile with heatmap, history timeline, WebSocket, theme switcher
@@ -628,6 +630,83 @@ cargo run -- simulate --dev --count 5
 ```
 
 Dev mode: dashboard served from disk (edit HTML/JS, refresh browser, no rebuild). Fake historical data seeded on first startup. Full login required (no auto-injected cookies) — use the "Dev Login" button on the login page.
+
+## Running Tests
+
+```bash
+# Unit tests only (no database required — HMAC, protocol parsing, etc.)
+cargo test --no-default-features --features server
+
+# All tests including DB tests (requires Postgres)
+./reset_db.sh                        # start a fresh Postgres container
+DATABASE_URL=postgres://postgres:walker@localhost/walker \
+  cargo test --no-default-features --features server
+```
+
+`#[sqlx::test]` spins up an isolated test database per test (using the migrations in `./migrations/`) and tears it down afterwards. Tests run against a real Postgres instance — no mocks.
+
+If Postgres is already running from a dev session, omit `reset_db.sh`. The test runner creates its own throwaway databases and won't touch the `walker` dev database.
+
+## Strava Integration
+
+Users can connect their Strava account to Walker from their profile page. Walker imports Walk, Hike, and treadmill run activities as closed segments, which feed into all existing calorie, distance, and leaderboard calculations.
+
+**Per-user credentials model:** Walker does not have a central Strava app with multi-athlete quota. Each user supplies their own Strava API app credentials (client_id + client_secret from strava.com/settings/api). Walker stores and uses these per-user credentials for all API calls and token refreshes. This avoids the need for Strava extended API approval.
+
+### Account Linking Flow
+
+Strava is **not a login provider** — users authenticate via GitHub/Google as normal, then optionally connect Strava from their profile page ("Connections" section, own profile only).
+
+1. User creates a Strava API app at strava.com/settings/api, sets "Authorization Callback Domain" to the Walker server hostname
+2. On Walker profile page, user clicks "Connect", enters their Client ID and Client Secret
+3. User clicks "Authorize on Strava" — Walker opens a new tab to the Strava OAuth page for the user's app, with `redirect_uri={walker_origin}/strava-auth` and `scope=activity:read_all`
+4. After authorizing, Strava redirects the new tab to `/strava-auth?code=XXX` — Walker serves a page that sends `postMessage({stravaCode: code}, location.origin)` to the opener (the profile page) and closes itself
+5. The profile page receives the postMessage, auto-populates the code field, and submits immediately. Falls back to showing the code for manual paste if there is no opener (direct navigation to `/strava-auth`).
+6. Walker POSTs `{client_id, client_secret, code}` to `POST /auth/strava/connect` (requires `walker_id` cookie)
+7. Server exchanges the authorization code for tokens via Strava API (includes athlete ID and name in response), stores in `strava_connections`
+
+### Activity Import
+
+- Walk, Hike, Run, and VirtualRun are imported (both indoor and outdoor). TrailRun, rides, swims, and everything else are ignored. Uses `sport_type` (preferred, more granular) falling back to `type` for older records.
+- One segment per Strava activity: `average_speed × 3.6 = speed_kmh`, `moving_time = duration_s`, `distance = distance_m`
+- Each imported activity gets one row in `imported_activities` (with the full raw API response stored as JSONB) before the segment is inserted.
+- Calories computed at query time via existing MET formula — no special handling
+- Deduplication: `UNIQUE INDEX idx_segments_activity_dedup ON segments(user_id, activity_id) WHERE activity_id IS NOT NULL` — safe to re-sync
+- Strava-sourced segments show an orange **S** icon at the start of the segment row, linked to the Strava activity URL, with the activity name on hover
+- Debug link on each imported segment → `GET /api/activity/raw/{activity_id}` (own-only, returns raw JSONB)
+
+### On-Demand Sync
+
+`POST /api/strava/sync` (requires `walker_id` cookie) — imports activities since the most recent Strava segment already in the DB (minus 1h buffer), returns `{"imported": N}`. Falls back to `last_synced_at` if no Strava segments exist yet. Used by the "Sync" button on the profile Connections section.
+
+### Startup Catchup
+
+On every server start, Walker spawns `strava::startup_sync()` as a background task. It fetches all users with Strava connections, then for each one determines the sync baseline via `sync_after_for_user`:
+
+1. Query `MAX(started_at)` of existing Strava segments for that user → use that timestamp minus 1h
+2. If no Strava segments exist, fall back to `last_synced_at` from `strava_connections`
+3. If neither is available, default to now (no backfill)
+
+The 1-hour buffer covers timing edge cases (activities near the boundary, clock skew). Import is idempotent — already-known activities hit `ON CONFLICT DO NOTHING` and are silently skipped. This means any activities missed while the server was offline are automatically caught up on the next restart without a fixed lookback window.
+
+`last_synced_at` on `strava_connections` is updated after every successful import (manual sync or webhook delivery). On first connection it is set to `NOW()`.
+
+### Database Tables
+
+- `strava_connections (user_id PK, athlete_id, client_id, client_secret, access_token, refresh_token, expires_at)` — per-user app credentials + tokens (plaintext; see TODO #6)
+- `imported_activities (id BIGSERIAL PK, source, external_id, name, source_url, raw_data JSONB, imported_at, UNIQUE(source, external_id))` — one row per imported external activity; stores the full raw API response
+- `segments.source TEXT DEFAULT 'ble'` — `'ble'` or `'strava'`
+- `segments.activity_id BIGINT FK → imported_activities(id)` — set for imported segments; NULL for BLE
+
+### Token Refresh
+
+Strava access tokens expire every 6 hours. `fresh_token()` in `strava.rs` checks `expires_at < NOW() + 5 min` (computed by DB) and refreshes inline before any API call using the user's own `client_id`/`client_secret` from `strava_connections`. No background refresh job.
+
+### Strava Setup (per user)
+
+1. Go to [strava.com/settings/api](https://www.strava.com/settings/api) → create an app
+2. Set "Authorization Callback Domain" to `walker.akerud.se` (prod) or `localhost` (dev)
+3. On the Walker profile page, click "Connect" under Connections and follow the on-screen steps
 
 ## Deployment (Render.com)
 

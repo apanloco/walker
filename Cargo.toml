@@ -32,7 +32,7 @@ crossterm = { version = "0.28", features = ["event-stream"], optional = true }
 # Server-only (HTTP server, DB, auth)
 axum = { version = "0.8.8", features = ["json", "ws"], optional = true }
 tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "uuid"], optional = true }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "uuid", "json"], optional = true }
 tower_governor = { version = "0.8", optional = true }
 
 # Shared
