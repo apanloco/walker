@@ -17,7 +17,6 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 1. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
 2. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
 3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
-4. **Phase out total kcal** — The platform should show active kcal only. Remove total kcal from: leaderboard hover tooltip, profile stats, and any other UI surfaces. Active kcal is the meaningful number; total kcal includes resting metabolic rate which just adds noise. Server can keep computing both for API backwards compatibility, but the dashboard should stop exposing total.
 
 ## License
 
@@ -47,7 +46,7 @@ src/
   server/
     mod.rs         — server startup, wiring, dev setup, startup health checks
     auth.rs        — OAuth: device code flow (CLI) + web login (dashboard), GitHub/Google
-    db.rs          — PostgreSQL: migrations, segment CRUD, MET table, queries, dev seed data
+    db.rs          — PostgreSQL: migrations, segment CRUD, queries, dev seed data
     update.rs      — POST /api/update, segment lifecycle (open/close/heartbeat)
     live.rs        — /ws/live + /ws/live/{id} WebSockets, simulate register, disconnect checker
     history.rs     — GET /api/history/{id} segment timeline
@@ -59,11 +58,12 @@ dashboard/
   app.js           — leaderboard, profile with heatmap, history timeline, WebSocket, theme switcher
 migrations/
   001_initial.sql       — users, tokens, segments tables
-  002_calorie_functions — MET table + calorie wrappers (3-arg; superseded by 006)
+  002_calorie_functions — initial calorie functions (superseded by 007)
   003_drop_calories_column — remove stored calories column (computed on read)
   004_admin             — is_admin flag on users
-  005_interpolate_met   — piecewise linear MET interpolation
-  006_acsm              — ACSM model + incline_percent + 4-arg calorie wrappers
+  005_interpolate_met   — piecewise linear MET interpolation (superseded by 007)
+  006_acsm              — ACSM model + incline_percent column (functions superseded by 007)
+  007_simplify_calorie_functions — drop everything except active_calories(4-arg) with ACSM math inlined
 deny.toml          — cargo-deny license/advisory config
 Dockerfile         — multi-stage: server-only build with dep caching
 reset_db.sh        — recreate local Postgres container
@@ -182,33 +182,21 @@ Every closed segment stores: `speed_kmh`, `duration_s`, `weight_kg`, `distance_m
 
 ### Calorie Formula
 
-Two calorie values computed at query time via PostgreSQL functions (`total_calories()`, `active_calories()`):
+One calorie value, computed at query time via the `active_calories()` PostgreSQL function: exercise-only kcal above resting. Total energy expenditure (active + resting metabolic rate) is deliberately not exposed — resting kcal inflate the number without reflecting effort, which distorts leaderboards and rewards long sessions over hard ones.
 
-- **Total:** full energy expenditure including resting metabolic rate
-- **Active:** exercise-only contribution above resting (subtracts the 1-MET / 3.5 ml/kg/min resting term)
-
-Both values are returned in all API responses. The dashboard shows active as primary, total as secondary context.
-
-Calories are **not stored** in the database — they're pure functions of speed, incline, weight, and duration, computed on read. Formula changes apply retroactively to all historical data with no migration.
+Calories are **not stored** in the database — `active_calories()` is a pure function of speed, incline, weight, and duration, computed on read. Formula changes apply retroactively to all historical data with no migration.
 
 ### Calorie Model — ACSM walking equation
 
-The active model is **ACSM** (incline-aware). Full definition and derivation live in `migrations/006_acsm.sql`. Summary:
+The schema exposes exactly one calorie function: `active_calories(speed, incline, weight, duration)`. The ACSM math is inlined directly in the function body — no pass-through wrappers, no model variants, no MET reference implementation. Swapping to a different walking equation later (e.g. Ludlow–Weyand) is a one-line edit to the body in a new migration; query sites keep using the generic name.
 
 - **Level VO₂:** `0.1 × speed_m_per_min` (ml O₂/kg/min above resting)
 - **Grade term:** `1.8 × speed_m_per_min × grade` where `grade = incline_percent / 100`
-- **Resting:** `3.5` ml O₂/kg/min (only included in total, not active)
 - **kcal:** `VO₂ × weight_kg × duration_s / 12000` (5 kcal per L O₂, 1000 ml per L, 60 s per min → `1/12000`)
 
+The ACSM resting term (`+ 3.5` ml/kg/min) is excluded — we only compute active kcal.
+
 NULL incline is treated as 0% — devices that don't report incline get the level formula.
-
-`active_calories()` and `total_calories()` are thin pass-through wrappers defined in `migrations/006_acsm.sql`, delegating to `active_calories_acsm` / `total_calories_acsm`. The wrapper is the single point to change when adopting a future model (e.g. Ludlow–Weyand) — query sites never name the model directly.
-
-#### MET (reference only, kept in SQL)
-
-The Compendium MET model (`met_for_speed()` from `migrations/005_interpolate_met.sql`, plus `active_calories_met` / `total_calories_met` in 006) is retained in the database as a private reference implementation. It's **not** called by any dashboard, API, or CLI path.
-
-At 0% grade ACSM is ~30% lower than Compendium-MET at 2 km/h. This is intentional — slow walking should not be as rewarding as brisk walking, linear-in-speed is a cleaner incentive shape, and ACSM's real advantage (grade handling) decides it for Walker once incline-capable treadmills arrive. See [Compendium of Physical Activities — Walking](https://pacompendium.com/walking/) for MET's source table.
 
 ### Incline
 
@@ -257,15 +245,15 @@ All timing constants in one place. Referenced throughout this doc.
 **`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the open segment JSON on every heartbeat and state change. Generic live feed — the dashboard uses it on the History page, but it's also intended for game integrations and any other client that wants real-time open-segment data.
 ```json
 {"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "incline_percent": null,
-             "duration_s": 120.5, "weight_kg": 70.0, "calories_kcal": 12.3,
-             "active_calories_kcal": 8.5, "distance_m": 107.1, "open": true}}
+             "duration_s": 120.5, "weight_kg": 70.0, "active_calories_kcal": 8.5,
+             "distance_m": 107.1, "open": true}}
 ```
 Returns `{"segment": null}` when the user has no open segment. `incline_percent` is `null` when the device doesn't report incline.
 
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
 {
-  "today": [{"id": "uuid", "name": "alice", "calories_kcal": 89.1, "active_calories_kcal": 63.2,
+  "today": [{"id": "uuid", "name": "alice", "active_calories_kcal": 63.2,
              "status": "walking", "speed_kmh": 4.0, "active_kcal_per_h": 175.0, "incline_percent": 2.0}],
   "weekly": [...],
   "all_time": [...],
@@ -324,12 +312,12 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Hero: avatar, name, streak, live walking badge
 - Last 7 days: horizontal bar chart with live indicator (blinking dot next to today when walking/idle). Bars show "active kcal" label. Refetched on `/ws/live` notifications so bars update live while walking.
 - GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → history page for that date
-- Stats grid: total kcal, km, active time, active days
+- Stats grid: active kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
 - "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
 
 **FAQ page** (public — no login required):
-- Static Q&A explaining how Walker works (active vs total kcal, MET, segments, steps, privacy, etc.)
+- Static Q&A explaining how Walker works (how calories are calculated, segments, steps, privacy, etc.)
 - Grouped into three sections: The Numbers / How Tracking Works / Platform
 - Uses native `<details>`/`<summary>` for expand/collapse — no JavaScript
 - Route: `/faq`. All content lives inline in `index.html`; theme-unaware (uses semantic Tailwind classes)
@@ -338,7 +326,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Segments for a given date, grouped into sessions (gap > 60 min = separate session)
 - Supports `?date=YYYY-MM-DD` query param, defaults to today
 - Newest session first, newest segment first within each session
-- Each segment is a mini-card: time range, duration, distance, calories, speed, MET, weight, incline (`no incline` when null/0, `X.X% incline` otherwise — matches the leaderboard wording)
+- Each segment is a mini-card: time range, duration, distance, calories, speed, weight, incline (`no incline` when null/0, `X.X% incline` otherwise — matches the leaderboard wording)
 - Gaps between segments shown as "paused X min Y sec" dividers
 - **Two-channel architecture** for smart DOM updates (today only):
   - `GET /api/history/{id}?date=` — closed segments, fetched on page load + `/ws/live` notifications
@@ -383,7 +371,7 @@ Required. Migrations run automatically on startup. The server will not start wit
 
 Steps are the only honest signal. But they're NOT used for calories/distance because:
 1. Step length varies with speed
-2. Calories depend on speed (MET tables), not step count
+2. Calories depend on speed and incline, not step count
 3. Not all treadmills report steps (FTMS doesn't)
 4. Speed is accurate when walking (user must match belt)
 
@@ -656,5 +644,4 @@ Dashboard should work well on phone screens.
 
 - [TreadSpan](https://github.com/blak3r/treadspan) — UREVO E1L protocol reverse-engineering
 - [hassio-ftms](https://github.com/dudanov/hassio-ftms) — Home Assistant FTMS integration
-- [Compendium of Physical Activities — Walking](https://pacompendium.com/walking/) — MET values for treadmill walking speeds
-- [2024 Adult Compendium Update (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10818145/) — Latest revision of the Compendium
+- ACSM Guidelines for Exercise Testing and Prescription — walking equation used for all calorie computations

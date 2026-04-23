@@ -527,7 +527,7 @@ function renderProfile(p) {
   for (let i = 0; i <= 6; i++) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
     const dateStr = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
-    allDays.push(dataByDate[dateStr] || { date: dateStr, active_calories_kcal: 0, calories_kcal: 0, distance_km: 0, active_secs: 0 });
+    allDays.push(dataByDate[dateStr] || { date: dateStr, active_calories_kcal: 0, distance_km: 0, active_secs: 0 });
   }
   const maxWeekCal = Math.max(...allDays.map(d => d.active_calories_kcal), 0.1);
   const weekBars = allDays.map(d => {

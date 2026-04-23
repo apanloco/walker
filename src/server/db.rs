@@ -379,7 +379,6 @@ pub async fn get_current_segment_json(
 ) -> anyhow::Result<String> {
     let row = sqlx::query(
         "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                total_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS calories_kcal,
                 active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
                 distance_m
          FROM segments
@@ -399,7 +398,6 @@ pub async fn get_current_segment_json(
                     "incline_percent": r.get::<Option<f32>, _>("incline_percent"),
                     "duration_s": r.get::<f32, _>("duration_s"),
                     "weight_kg": r.get::<f32, _>("weight_kg"),
-                    "calories_kcal": r.get::<f32, _>("calories_kcal"),
                     "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
                     "distance_m": r.get::<f32, _>("distance_m"),
                     "open": true,
@@ -485,7 +483,6 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
 #[derive(serde::Serialize, Clone)]
 pub struct DailySnapshot {
     pub date: String,
-    pub calories_kcal: f64,
     pub active_calories_kcal: f64,
     pub distance_km: f64,
     pub active_secs: i32,
@@ -498,7 +495,6 @@ pub async fn user_history(
 ) -> anyhow::Result<Vec<DailySnapshot>> {
     let rows = sqlx::query(
         "SELECT started_at::date::TEXT AS date,
-                COALESCE(SUM(total_calories(speed_kmh, incline_percent, weight_kg, duration_s)), 0)::REAL AS total_kcal,
                 COALESCE(SUM(active_calories(speed_kmh, incline_percent, weight_kg, duration_s)), 0)::REAL AS active_kcal,
                 COALESCE(SUM(distance_m), 0)::REAL AS total_dist,
                 COALESCE(SUM(duration_s), 0)::REAL AS total_dur
@@ -516,13 +512,11 @@ pub async fn user_history(
     Ok(rows
         .iter()
         .map(|r| {
-            let kcal: f32 = r.get("total_kcal");
             let active_kcal: f32 = r.get("active_kcal");
             let dist: f32 = r.get("total_dist");
             let dur: f32 = r.get("total_dur");
             DailySnapshot {
                 date: r.get("date"),
-                calories_kcal: kcal as f64,
                 active_calories_kcal: active_kcal as f64,
                 distance_km: dist as f64 / 1000.0,
                 active_secs: dur as i32,
@@ -558,7 +552,6 @@ pub struct LeaderboardEntry {
     pub id: uuid::Uuid,
     pub name: String,
     pub avatar_url: Option<String>,
-    pub calories_kcal: f64,
     pub active_calories_kcal: f64,
     pub distance_km: f64,
 }
@@ -569,13 +562,12 @@ async fn query_leaderboard(
 ) -> anyhow::Result<Vec<LeaderboardEntry>> {
     let sql = format!(
         "SELECT u.id, u.display_name AS name, u.avatar_url,
-                COALESCE(SUM(total_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0)::REAL AS total_kcal,
                 COALESCE(SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0)::REAL AS active_kcal,
                 (COALESCE(SUM(s.distance_m), 0) / 1000.0)::REAL AS distance_km
          FROM users u LEFT JOIN segments s ON u.id = s.user_id AND s.moving = true {date_filter}
          GROUP BY u.id, u.display_name, u.avatar_url
-         HAVING COALESCE(SUM(total_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0) > 0
-         ORDER BY total_kcal DESC LIMIT 10"
+         HAVING COALESCE(SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s)), 0) > 0
+         ORDER BY active_kcal DESC LIMIT 10"
     );
 
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
@@ -586,7 +578,6 @@ async fn query_leaderboard(
             id: r.get::<uuid::Uuid, _>("id"),
             name: r.get("name"),
             avatar_url: r.get("avatar_url"),
-            calories_kcal: r.get::<f32, _>("total_kcal") as f64,
             active_calories_kcal: r.get::<f32, _>("active_kcal") as f64,
             distance_km: r.get::<f32, _>("distance_km") as f64,
         })

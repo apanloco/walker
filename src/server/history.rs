@@ -58,7 +58,6 @@ async fn get_closed_segments(
     let rows = if date_filter.is_empty() {
         sqlx::query(
             "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                    total_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS calories_kcal,
                     active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
                     distance_m
              FROM segments
@@ -71,7 +70,6 @@ async fn get_closed_segments(
     } else {
         sqlx::query(
             "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                    total_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS calories_kcal,
                     active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
                     distance_m
              FROM segments
@@ -104,7 +102,6 @@ fn segment_json(r: &sqlx::postgres::PgRow) -> serde_json::Value {
         "incline_percent": r.get::<Option<f32>, _>("incline_percent"),
         "duration_s": r.get::<f32, _>("duration_s"),
         "weight_kg": r.get::<f32, _>("weight_kg"),
-        "calories_kcal": r.get::<f32, _>("calories_kcal"),
         "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
         "distance_m": r.get::<f32, _>("distance_m"),
         "open": false,
