@@ -64,7 +64,6 @@ async fn get_leaderboard(State(ctx): State<SharedLive>) -> impl IntoResponse {
                     "id": e.id,
                     "name": e.name,
                     "avatar_url": e.avatar_url,
-                    "calories_kcal": e.calories_kcal,
                     "active_calories_kcal": e.active_calories_kcal,
                     "distance_km": e.distance_km,
                     "status": status,
