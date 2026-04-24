@@ -6,7 +6,7 @@ Real-time treadmill tracking. Connect a Bluetooth walking machine, track your wa
 
 ## What It Does
 
-Walker connects to your Bluetooth treadmill, detects when you're actually walking (not just standing on the belt), and computes honest calories using the ACSM walking equation. Data streams to a server that powers a live dashboard with leaderboards, profiles, heatmaps, and history.
+Walker connects to your Bluetooth treadmill, detects when you're actually walking (not just standing on the belt), and computes honest calories using peer-reviewed biomechanics models. Data streams to a server that powers a live dashboard with leaderboards, profiles, heatmaps, and history.
 
 **Steps detect, speed measures, server computes.**
 
@@ -40,7 +40,7 @@ walker listen [--dev]      # run the server
 
 ## How Calories Work
 
-Walker uses the ACSM walking equation (incline-aware, linear in speed). Calories are computed from speed, incline, weight, and duration — never stored, always calculated fresh. This means formula improvements apply retroactively to all historical data.
+Walker uses the Ludlow–Weyand (2017) minimum mechanics model for walking and the Minetti (2002) polynomial for running, dispatched at the 7 km/h gait transition. Calories are computed from speed, incline, weight, and duration — never stored, always calculated fresh. This means formula improvements apply retroactively to all historical data.
 
 Only **active kcal** is shown — the exercise-only number above resting metabolic rate. Resting calories are deliberately excluded: they inflate the number without reflecting effort, which turns leaderboards into a "who sat on the belt longest" contest.
 
