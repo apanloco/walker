@@ -64,6 +64,7 @@ migrations/
   005_interpolate_met   — piecewise linear MET interpolation (superseded by 007)
   006_acsm              — ACSM model + incline_percent column (functions superseded by 007)
   007_simplify_calorie_functions — drop everything except active_calories(4-arg) with ACSM math inlined
+  008_ludlow_weyand_minetti — Ludlow-Weyand (walking) + Minetti (running) models, speed-based dispatch
 deny.toml          — cargo-deny license/advisory config
 Dockerfile         — multi-stage: server-only build with dep caching
 reset_db.sh        — recreate local Postgres container
@@ -186,18 +187,35 @@ One calorie value, computed at query time via the `active_calories()` PostgreSQL
 
 Calories are **not stored** in the database — `active_calories()` is a pure function of speed, incline, weight, and duration, computed on read. Formula changes apply retroactively to all historical data with no migration.
 
-### Calorie Model — ACSM walking equation
+### Calorie Models
 
-The schema exposes exactly one calorie function: `active_calories(speed, incline, weight, duration)`. The ACSM math is inlined directly in the function body — no pass-through wrappers, no model variants, no MET reference implementation. Swapping to a different walking equation later (e.g. Ludlow–Weyand) is a one-line edit to the body in a new migration; query sites keep using the generic name.
+Dispatch is speed-based inside `active_calories()` (defined in `migrations/008_ludlow_weyand_minetti.sql`). The threshold is **7 km/h**, matching the physiological gait transition. This applies uniformly to BLE and Strava data — no source or sport_type column needed. Call sites are unchanged (still 4-arg). Expect a step discontinuity at 7 km/h (~50% jump in kcal/h at 70 kg) reflecting the gait-model switch; this is deliberate.
 
-- **Level VO₂:** `0.1 × speed_m_per_min` (ml O₂/kg/min above resting)
-- **Grade term:** `1.8 × speed_m_per_min × grade` where `grade = incline_percent / 100`
-- **kcal:** `VO₂ × weight_kg × duration_s / 12000` (5 kcal per L O₂, 1000 ml per L, 60 s per min → `1/12000`)
+#### Walking: Ludlow–Weyand (2017) — speed < 7 km/h
 
-The ACSM resting term (`+ 3.5` ml/kg/min) is excluded — we only compute active kcal.
+The minimum mechanics model. Significantly more accurate than ACSM at low speeds (ACSM underestimates by ~35% at 2 km/h).
 
-NULL incline is treated as 0% — devices that don't report incline get the level formula.
+Active VO₂ (ml O₂/kg/min):
+- **Grade ≥ 0:** `0.32g + 3.28 + (1 + 0.19g) × 2.66 × s²`
+- **Grade < 0:** `0.73 × (3.28 + 2.66 × s²)`
 
+where `g = incline_percent` (percent grade, may be negative), `s = speed_kmh / 3.6` (m/s)
+
+**kcal:** `active_vo2 × weight_kg × duration_s / 12000` (5 kcal per L O₂, 1000 ml per L, 60 s per min)
+
+NULL incline treated as 0%. Source: Ludlow & Weyand, *J Appl Physiol* 123:1288–1302, 2017.
+
+#### Running: Minetti (2002) — speed ≥ 7 km/h
+
+5th-order polynomial fit to measured energy cost across ±45% grade. Cr is net cost above resting — no resting subtraction needed for active calories.
+
+`Cr(g) = 155.4g⁵ − 30.4g⁴ − 43.3g³ + 46.3g² + 19.5g + 3.6` (J/kg/m)
+
+where `g = incline_percent / 100` (decimal fraction, valid −0.45 to +0.45)
+
+**kcal:** `Cr × weight_kg × (speed_kmh / 3.6 × duration_s) / 4184`
+
+Source: Minetti et al., *J Appl Physiol* 93:1039–1046, 2002. Used by Strava and Garmin for Grade Adjusted Pace.
 ### Incline
 
 Incline is stored per-segment as `incline_percent REAL NULL`. Rationale:
