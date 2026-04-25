@@ -5,6 +5,7 @@ pub mod history;
 pub mod leaderboard;
 pub mod live;
 pub mod profile;
+pub mod strava;
 pub mod update;
 
 use axum::Router;
@@ -40,7 +41,6 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     let has_github = config.github_client_id.is_some() && config.github_client_secret.is_some();
     let has_google = config.google_client_id.is_some() && config.google_client_secret.is_some();
-
     if has_github {
         info!("  GitHub OAuth: configured");
     } else {
@@ -55,6 +55,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             "  Google OAuth: not configured (set WALKER_GOOGLE_CLIENT_ID + WALKER_GOOGLE_CLIENT_SECRET)"
         );
     }
+    info!("  Strava: per-user credentials (users supply their own Strava app)");
     if !has_github && !has_google && !config.dev {
         tracing::warn!(
             "  No login providers configured! Users won't be able to log in. Use --dev for testing."
@@ -108,13 +109,23 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         github_client_secret: config.github_client_secret,
         google_client_id: config.google_client_id,
         google_client_secret: config.google_client_secret,
-        base_url: config.base_url,
+        base_url: config.base_url.clone(),
         db_pool: pool.clone(),
         dev: config.dev,
     });
 
+    let strava_state: strava::SharedStrava = Arc::new(strava::StravaState {
+        live: live_ctx.clone(),
+    });
+
     // Lightweight timer for disconnect detection.
     live::spawn_disconnect_checker(live_ctx.clone());
+
+    // Resync Strava for all connected users to catch activities missed while offline.
+    let strava_startup = strava_state.clone();
+    tokio::spawn(async move {
+        strava::startup_sync(&strava_startup).await;
+    });
 
     // Stale cookie middleware: if walker_id references a non-existent user, clear it.
     // Dev mode: set walker_dev cookie so the dashboard knows.
@@ -122,6 +133,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let is_dev = config.dev;
     let app = Router::new()
         .merge(auth::routes().with_state(auth_state))
+        .merge(strava::routes().with_state(strava_state))
         .merge(update::routes().with_state(live_ctx.clone()))
         .merge(live::routes().with_state(live_ctx.clone()))
         .merge(leaderboard::routes().with_state(live_ctx.clone()))

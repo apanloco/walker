@@ -380,7 +380,10 @@ pub async fn get_current_segment_json(
     let row = sqlx::query(
         "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
                 active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
-                distance_m
+                distance_m, source,
+                NULL::BIGINT AS activity_id,
+                NULL::TEXT   AS activity_name,
+                NULL::TEXT   AS source_url
          FROM segments
          WHERE user_id = $1 AND open = true",
     )
@@ -400,6 +403,10 @@ pub async fn get_current_segment_json(
                     "weight_kg": r.get::<f32, _>("weight_kg"),
                     "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
                     "distance_m": r.get::<f32, _>("distance_m"),
+                    "source": r.get::<String, _>("source"),
+                    "activity_id": r.get::<Option<i64>, _>("activity_id"),
+                    "activity_name": r.get::<Option<String>, _>("activity_name"),
+                    "source_url": r.get::<Option<String>, _>("source_url"),
                     "open": true,
                 }
             })
@@ -407,6 +414,232 @@ pub async fn get_current_segment_json(
         None => serde_json::json!({"segment": null}),
     };
     Ok(json.to_string())
+}
+
+// -- Strava --
+
+pub struct StravaConnection {
+    pub client_id: String,
+    pub client_secret: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    /// True when expires_at < NOW() + 5 minutes (computed by the DB).
+    pub needs_refresh: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_strava_connection(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    athlete_id: i64,
+    client_id: &str,
+    client_secret: &str,
+    access_token: &str,
+    refresh_token: &str,
+    expires_at_unix: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO strava_connections
+             (user_id, athlete_id, client_id, client_secret, access_token, refresh_token, expires_at, last_synced_at)
+         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7), NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+             athlete_id      = $2,
+             client_id       = $3,
+             client_secret   = $4,
+             access_token    = $5,
+             refresh_token   = $6,
+             expires_at      = to_timestamp($7),
+             connected_at    = NOW(),
+             last_synced_at  = NOW()",
+    )
+    .bind(user_id)
+    .bind(athlete_id)
+    .bind(client_id)
+    .bind(client_secret)
+    .bind(access_token)
+    .bind(refresh_token)
+    .bind(expires_at_unix)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_strava_connection(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+) -> anyhow::Result<Option<StravaConnection>> {
+    let row = sqlx::query(
+        "SELECT client_id, client_secret, access_token, refresh_token,
+                expires_at < NOW() + INTERVAL '5 minutes' AS needs_refresh
+         FROM strava_connections WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| StravaConnection {
+        client_id: r.get("client_id"),
+        client_secret: r.get("client_secret"),
+        access_token: r.get("access_token"),
+        refresh_token: r.get("refresh_token"),
+        needs_refresh: r.get("needs_refresh"),
+    }))
+}
+
+/// Returns the Unix timestamp of the most recent Strava-sourced segment for a user.
+/// Used as the sync baseline so we only fetch activities we haven't seen yet.
+pub async fn get_latest_strava_segment_unix(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+) -> anyhow::Result<Option<i64>> {
+    let row = sqlx::query(
+        "SELECT EXTRACT(EPOCH FROM MAX(started_at))::BIGINT AS ts
+         FROM segments WHERE user_id = $1 AND source = 'strava'",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get("ts"))
+}
+
+pub async fn update_strava_tokens(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    access_token: &str,
+    expires_at_unix: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE strava_connections SET access_token = $2, expires_at = to_timestamp($3)
+         WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .bind(access_token)
+    .bind(expires_at_unix)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_strava_last_synced(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Result<()> {
+    sqlx::query("UPDATE strava_connections SET last_synced_at = NOW() WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_strava_last_synced(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+) -> anyhow::Result<Option<i64>> {
+    let row = sqlx::query(
+        "SELECT EXTRACT(EPOCH FROM last_synced_at)::BIGINT AS ts FROM strava_connections WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.get("ts")))
+}
+
+/// Returns (user_id, last_synced_at as Unix timestamp) for all connected users.
+/// last_synced_at is None if the column is NULL (shouldn't happen after migration).
+pub async fn get_strava_users_for_sync(
+    pool: &PgPool,
+) -> anyhow::Result<Vec<(uuid::Uuid, Option<i64>)>> {
+    let rows = sqlx::query(
+        "SELECT user_id, EXTRACT(EPOCH FROM last_synced_at)::BIGINT AS last_synced_unix
+         FROM strava_connections",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("user_id");
+            let ts: Option<i64> = r.get("last_synced_unix");
+            (id, ts)
+        })
+        .collect())
+}
+
+pub async fn delete_strava_connection(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM strava_connections WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn strava_connected(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Result<bool> {
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM strava_connections WHERE user_id = $1) AS connected",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get("connected"))
+}
+
+/// Insert or update an entry in imported_activities. Returns the row ID.
+pub async fn upsert_imported_activity(
+    pool: &PgPool,
+    source: &str,
+    external_id: &str,
+    name: Option<&str>,
+    source_url: Option<&str>,
+    raw_data: &serde_json::Value,
+) -> anyhow::Result<i64> {
+    let row = sqlx::query(
+        "INSERT INTO imported_activities (source, external_id, name, source_url, raw_data)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (source, external_id) DO UPDATE SET
+             name       = EXCLUDED.name,
+             source_url = EXCLUDED.source_url,
+             raw_data   = EXCLUDED.raw_data
+         RETURNING id",
+    )
+    .bind(source)
+    .bind(external_id)
+    .bind(name)
+    .bind(source_url)
+    .bind(raw_data)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get("id"))
+}
+
+/// Insert a closed segment imported from an external source (e.g. Strava).
+/// Returns true if inserted, false if a duplicate (ON CONFLICT DO NOTHING).
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_imported_segment(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    started_at: &str,
+    speed_kmh: f32,
+    incline_percent: Option<f32>,
+    duration_s: f32,
+    distance_m: f32,
+    weight_kg: f32,
+    activity_id: i64,
+) -> anyhow::Result<bool> {
+    let result = sqlx::query(
+        "INSERT INTO segments
+             (user_id, started_at, moving, speed_kmh, incline_percent, duration_s, distance_m, weight_kg,
+              open, source, activity_id, last_heartbeat_at)
+         VALUES ($1, $2::timestamptz, true, $3, $4, $5, $6, $7, false, 'strava', $8, NOW())
+         ON CONFLICT (user_id, activity_id) WHERE activity_id IS NOT NULL DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(started_at)
+    .bind(speed_kmh)
+    .bind(incline_percent)
+    .bind(duration_s)
+    .bind(distance_m)
+    .bind(weight_kg)
+    .bind(activity_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // -- Seed dev data --
@@ -472,6 +705,62 @@ pub async fn seed_dev_history(pool: &PgPool, user_id: uuid::Uuid) -> anyhow::Res
                 offset_secs += idle_secs;
             }
         }
+    }
+
+    // Strava activities. Raw JSON loaded from strava_seed/ at compile time via
+    // include_str!. Dates as relative offsets from today so the heatmap stays
+    // populated year-over-year. (external_id, name, days_ago, time_secs,
+    // speed_kmh, duration_s, distance_m, raw_json)
+    #[allow(clippy::type_complexity)]
+    let strava_seed: &[(&str, &str, i32, i32, f32, f32, f32, &str)] = &[(
+        "18214327032",
+        "Afternoon Run",
+        1,
+        55566,
+        12.58,
+        3825.0,
+        13364.8,
+        include_str!("strava_seed/18214327032.json"),
+    )];
+
+    for &(ext_id, name, days_ago, time_secs, speed_kmh, duration_s, distance_m, raw_json) in
+        strava_seed
+    {
+        let source_url = format!("https://www.strava.com/activities/{ext_id}");
+        let raw_data: serde_json::Value = serde_json::from_str(raw_json).unwrap_or_default();
+        let incline_percent: Option<f32> = raw_data["average_grade"].as_f64().map(|g| g as f32);
+        let act_row = sqlx::query(
+            "INSERT INTO imported_activities (source, external_id, name, source_url, raw_data)
+             VALUES ('strava', $1, $2, $3, $4)
+             ON CONFLICT (source, external_id) DO UPDATE SET name = EXCLUDED.name, raw_data = EXCLUDED.raw_data
+             RETURNING id",
+        )
+        .bind(ext_id)
+        .bind(name)
+        .bind(&source_url)
+        .bind(&raw_data)
+        .fetch_one(pool)
+        .await?;
+        let activity_id: i64 = act_row.get("id");
+
+        sqlx::query(
+            "INSERT INTO segments
+             (user_id, started_at, moving, speed_kmh, incline_percent, duration_s, distance_m, weight_kg, open, source, activity_id)
+             VALUES ($1, (CURRENT_DATE - ($2 || ' days')::INTERVAL) + ($3 || ' seconds')::INTERVAL,
+                     true, $4, $5, $6, $7, $8, false, 'strava', $9)
+             ON CONFLICT (user_id, activity_id) WHERE activity_id IS NOT NULL DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(days_ago)
+        .bind(time_secs)
+        .bind(speed_kmh)
+        .bind(incline_percent)
+        .bind(duration_s)
+        .bind(distance_m)
+        .bind(weight_kg as f32)
+        .bind(activity_id)
+        .execute(pool)
+        .await?;
     }
 
     info!("Seeded dev history for {user_id}");
