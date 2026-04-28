@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod dashboard;
+pub mod day;
 pub mod db;
 pub mod history;
 pub mod leaderboard;
@@ -126,7 +127,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .merge(live::routes().with_state(live_ctx.clone()))
         .merge(leaderboard::routes().with_state(live_ctx.clone()))
         .merge(profile::routes().with_state(live_ctx.clone()))
-        .merge(history::routes().with_state(live_ctx))
+        .merge(history::routes().with_state(live_ctx.clone()))
+        .merge(day::routes().with_state(live_ctx))
         .merge(dashboard::routes(config.dev))
         .layer(axum::middleware::map_response(
             move |request_headers: axum::http::HeaderMap,

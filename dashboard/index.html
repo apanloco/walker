@@ -237,6 +237,25 @@ details[open] summary::before { content: '−'; }
       <div id="lb-daily-winners" class="space-y-1"><div class="text-gray-600 text-sm italic">No data yet</div></div>
     </div>
   </div>
+
+  <!-- Day chart: cumulative kcal per user over time -->
+  <div id="day-chart-section" class="bg-surface-800 rounded-xl border border-gray-800 theme-panel p-5 mt-4">
+    <div class="flex items-center gap-1 mb-4">
+      <button id="day-prev" class="w-8 h-8 inline-flex items-center justify-center text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Previous day">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <button id="day-next" class="w-8 h-8 inline-flex items-center justify-center text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Next day">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button id="day-today" class="h-8 px-2 inline-flex items-center justify-center gap-1.5 text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors text-xs" title="Back to today">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
+        <span>Today</span>
+      </button>
+      <h3 id="day-title" class="text-base font-semibold text-white ml-3">Today</h3>
+    </div>
+    <div id="day-chart-container" class="relative"></div>
+    <div id="day-chart-legend" class="flex flex-wrap gap-x-4 gap-y-2 mt-4"></div>
+  </div>
 </div>
 
 <!-- Profile page -->
