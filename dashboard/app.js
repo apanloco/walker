@@ -87,6 +87,8 @@ function initPage() {
     // Only connect live WebSocket for today.
     if (!currentHistoryDate) connectHistoryWs();
   }
+
+  return page;
 }
 
 
@@ -287,6 +289,299 @@ function fetchLeaderboard() {
     })
     .catch(e => console.error('Failed to fetch leaderboard:', e));
 }
+
+// -- Day chart (cumulative kcal over time, per user) --
+
+let currentDayDate = null; // null = today (auto-rolls)
+let lastDayData = null;
+
+function utcTodayStr() {
+  const d = new Date();
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+function dayViewingToday() {
+  return !currentDayDate || currentDayDate === utcTodayStr();
+}
+
+function dayShiftDate(deltaDays) {
+  const cur = currentDayDate || utcTodayStr();
+  const d = new Date(cur + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  const next = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+  // Block future dates.
+  if (next > utcTodayStr()) return;
+  currentDayDate = next === utcTodayStr() ? null : next;
+  fetchDay();
+}
+
+function userColor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return 'hsl(' + ((h % 360 + 360) % 360) + ', 65%, 60%)';
+}
+
+function fetchDay() {
+  const date = currentDayDate || utcTodayStr();
+  fetch('/api/day/' + date)
+    .then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
+    .then(data => {
+      lastDayData = data;
+      renderDay();
+    })
+    .catch(e => console.error('Failed to fetch day:', e));
+}
+
+// Build cumulative-kcal points {t, kcal} where t is seconds since UTC midnight.
+function buildUserPoints(user, viewDateStr, isToday) {
+  const dayStartMs = new Date(viewDateStr + 'T00:00:00Z').getTime();
+  const points = [{t: 0, kcal: 0}];
+  let cum = 0;
+  for (const seg of user.segments) {
+    const startMs = new Date(seg.started_at).getTime();
+    const startT = (startMs - dayStartMs) / 1000;
+    let durSec = seg.duration_s;
+    let kcal = seg.active_calories_kcal;
+    if (seg.open && isToday) {
+      const elapsed = (Date.now() - startMs) / 1000;
+      if (elapsed > durSec && durSec > 0.01) {
+        kcal = (kcal / durSec) * elapsed;
+        durSec = elapsed;
+      }
+    }
+    const endT = startT + durSec;
+    if (points[points.length - 1].t < startT) points.push({t: startT, kcal: cum});
+    cum += kcal;
+    points.push({t: endT, kcal: cum});
+  }
+  // Extend flat to the right edge: 24:00 for past days, "now" for today.
+  const rightEdge = isToday ? Math.min(86400, (Date.now() - dayStartMs) / 1000) : 86400;
+  if (points[points.length - 1].t < rightEdge) points.push({t: rightEdge, kcal: cum});
+  return points;
+}
+
+function kcalAtTime(points, t) {
+  if (t <= points[0].t) return points[0].kcal;
+  for (let i = 1; i < points.length; i++) {
+    if (t <= points[i].t) {
+      const a = points[i-1], b = points[i];
+      if (b.t === a.t) return b.kcal;
+      return a.kcal + (b.kcal - a.kcal) * (t - a.t) / (b.t - a.t);
+    }
+  }
+  return points[points.length - 1].kcal;
+}
+
+function niceMax(v) {
+  if (v <= 0) return 10;
+  const exp = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / exp;
+  let nf;
+  if (f <= 1) nf = 1;
+  else if (f <= 2) nf = 2;
+  else if (f <= 5) nf = 5;
+  else nf = 10;
+  return nf * exp;
+}
+
+function fmtTimeOfDay(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function renderDay() {
+  const data = lastDayData;
+  if (!data) return;
+  const isToday = dayViewingToday();
+  const viewDate = data.date;
+
+  // Title.
+  const titleEl = document.getElementById('day-title');
+  if (isToday) {
+    titleEl.textContent = 'Today';
+  } else {
+    const d = new Date(viewDate + 'T00:00:00Z');
+    titleEl.textContent = d.toLocaleDateString('en', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' });
+  }
+
+  // Buttons: disable next/today when on today.
+  document.getElementById('day-next').disabled = isToday;
+  document.getElementById('day-next').classList.toggle('opacity-30', isToday);
+  document.getElementById('day-next').classList.toggle('cursor-not-allowed', isToday);
+  document.getElementById('day-today').disabled = isToday;
+  document.getElementById('day-today').classList.toggle('opacity-30', isToday);
+  document.getElementById('day-today').classList.toggle('cursor-not-allowed', isToday);
+
+  // Build per-user series.
+  const series = data.users.map(u => ({
+    id: u.id,
+    name: u.name,
+    avatar_url: u.avatar_url,
+    color: userColor(u.id),
+    points: buildUserPoints(u, viewDate, isToday),
+  }));
+
+  // Empty state.
+  const container = document.getElementById('day-chart-container');
+  const legendEl = document.getElementById('day-chart-legend');
+  if (series.length === 0) {
+    container.innerHTML = '<div class="h-[280px] flex items-center justify-center text-gray-600 italic text-sm">No activity</div>';
+    legendEl.innerHTML = '<div class="text-xs text-gray-600 italic">No active users</div>';
+    return;
+  }
+
+  // Dimensions.
+  const W = container.clientWidth || 1200;
+  const H = 280;
+  const PAD = { l: 44, r: 14, t: 12, b: 28 };
+  const innerW = W - PAD.l - PAD.r;
+  const innerH = H - PAD.t - PAD.b;
+
+  // X domain: crop to activity, snapped to hour, with a 4h minimum.
+  // Derive firstAct from raw segment data so a segment starting at exactly 00:00 UTC
+  // is honored (points[1] would be the segment's endpoint in that case, not its start).
+  const dayStartMs = new Date(viewDate + 'T00:00:00Z').getTime();
+  const firstAct = Math.min(...data.users.map(u =>
+    u.segments.length > 0
+      ? (new Date(u.segments[0].started_at).getTime() - dayStartMs) / 1000
+      : 86400
+  ));
+  const lastAct = Math.max(...series.map(s => s.points[s.points.length - 1].t));
+  let xMin = Math.max(0, Math.floor(firstAct / 3600) * 3600);
+  let xMax = Math.min(86400, Math.ceil(lastAct / 3600) * 3600);
+  const MIN_DOMAIN = 4 * 3600;
+  if (xMax - xMin < MIN_DOMAIN) {
+    const pad = (MIN_DOMAIN - (xMax - xMin)) / 2;
+    xMin = Math.max(0, xMin - pad);
+    xMax = Math.min(86400, xMax + pad);
+    if (xMax - xMin < MIN_DOMAIN) {
+      if (xMin === 0) xMax = Math.min(86400, xMin + MIN_DOMAIN);
+      else if (xMax === 86400) xMin = Math.max(0, xMax - MIN_DOMAIN);
+    }
+  }
+  const xDomain = xMax - xMin;
+
+  const maxKcal = Math.max(10, ...series.map(s => s.points[s.points.length - 1].kcal));
+  const yMax = niceMax(maxKcal * 1.1);
+
+  const xPx = t => PAD.l + (Math.max(xMin, Math.min(xMax, t)) - xMin) / xDomain * innerW;
+  const yPx = k => PAD.t + innerH - (k / yMax) * innerH;
+
+  // X tick step: aim for ~6 ticks at sensible hour multiples.
+  let xStep;
+  if (xDomain <= 6 * 3600) xStep = 3600;
+  else if (xDomain <= 12 * 3600) xStep = 2 * 3600;
+  else xStep = 4 * 3600;
+
+  // Grid + axes.
+  let svg = '';
+  svg += '<svg width="' + W + '" height="' + H + '" class="block">';
+
+  // Y gridlines + labels.
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const k = (yMax / yTicks) * i;
+    const y = yPx(k);
+    svg += '<line x1="' + PAD.l + '" x2="' + (W - PAD.r) + '" y1="' + y + '" y2="' + y + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
+    svg += '<text x="' + (PAD.l - 6) + '" y="' + (y + 3) + '" text-anchor="end" class="fill-gray-500" style="font-size:10px">' + Math.round(k) + '</text>';
+  }
+
+  // X gridlines + labels (snapped to xStep within [xMin, xMax]).
+  for (let t = xMin; t <= xMax + 1; t += xStep) {
+    const x = xPx(t);
+    svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
+    svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + String(Math.round(t / 3600)).padStart(2, '0') + ':00</text>';
+  }
+
+  // "Now" line on today.
+  if (isToday) {
+    const nowSecs = (Date.now() - new Date(viewDate + 'T00:00:00Z').getTime()) / 1000;
+    if (nowSecs >= xMin && nowSecs <= xMax) {
+      const x = xPx(nowSecs);
+      svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--walker-500))" stroke-width="1" stroke-dasharray="2,3" opacity="0.5"/>';
+    }
+  }
+
+  // Polylines.
+  for (const s of series) {
+    const pts = s.points.map(p => xPx(p.t) + ',' + yPx(p.kcal)).join(' ');
+    svg += '<polyline points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+  }
+
+  // Hover crosshair (hidden by default).
+  svg += '<line id="day-crosshair" x1="0" x2="0" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-500))" stroke-width="1" stroke-dasharray="3,3" opacity="0" pointer-events="none"/>';
+
+  // Hover-capture rect.
+  svg += '<rect id="day-hover-rect" x="' + PAD.l + '" y="' + PAD.t + '" width="' + innerW + '" height="' + innerH + '" fill="transparent"/>';
+
+  svg += '</svg>';
+
+  container.innerHTML = svg + '<div id="day-tooltip" class="absolute pointer-events-none hidden bg-surface-950 border border-gray-700 rounded-lg shadow-lg px-3 py-2 text-xs" style="z-index:50; min-width:180px"></div>';
+
+  // Legend.
+  legendEl.innerHTML = series.map(s =>
+    '<div class="flex items-center gap-2 text-xs text-gray-300">' +
+      '<span class="inline-block w-3 h-3 rounded-sm" style="background:' + s.color + '"></span>' +
+      '<span>' + esc(s.name) + '</span>' +
+      '<span class="text-gray-500">' + fmtNum(s.points[s.points.length - 1].kcal, 1) + ' kcal</span>' +
+    '</div>'
+  ).join('');
+
+  // Hover handling.
+  const rect = container.querySelector('#day-hover-rect');
+  const cross = container.querySelector('#day-crosshair');
+  const tip = container.querySelector('#day-tooltip');
+  rect.addEventListener('mousemove', (e) => {
+    const bounds = container.getBoundingClientRect();
+    const px = e.clientX - bounds.left;
+    const t = xMin + ((px - PAD.l) / innerW) * xDomain;
+    const tClamped = Math.max(xMin, Math.min(xMax, t));
+    cross.setAttribute('x1', xPx(tClamped));
+    cross.setAttribute('x2', xPx(tClamped));
+    cross.setAttribute('opacity', '0.7');
+    const ranked = series
+      .map(s => ({ name: s.name, color: s.color, kcal: kcalAtTime(s.points, tClamped) }))
+      .filter(r => r.kcal > 0)
+      .sort((a, b) => b.kcal - a.kcal);
+    let html = '<div class="text-gray-400 mb-1">' + fmtTimeOfDay(tClamped) + ' UTC</div>';
+    if (ranked.length === 0) {
+      html += '<div class="text-gray-600 italic">No one walking yet</div>';
+    } else {
+      html += ranked.map(r =>
+        '<div class="flex items-center justify-between gap-3 py-0.5">' +
+          '<span class="flex items-center gap-2"><span class="inline-block w-2 h-2 rounded-sm" style="background:' + r.color + '"></span>' +
+          '<span class="text-gray-200">' + esc(r.name) + '</span></span>' +
+          '<span class="text-white font-medium tabular-nums">' + fmtNum(r.kcal, 1) + '</span>' +
+        '</div>'
+      ).join('');
+    }
+    tip.innerHTML = html;
+    tip.classList.remove('hidden');
+    // Position: near cursor, flip if too close to right edge.
+    const tipW = tip.offsetWidth || 200;
+    const tipH = tip.offsetHeight || 80;
+    let tx = px + 14;
+    if (tx + tipW > bounds.width - 4) tx = px - tipW - 14;
+    let ty = e.clientY - bounds.top + 14;
+    if (ty + tipH > bounds.height - 4) ty = bounds.height - tipH - 4;
+    tip.style.left = tx + 'px';
+    tip.style.top = ty + 'px';
+  });
+  rect.addEventListener('mouseleave', () => {
+    cross.setAttribute('opacity', '0');
+    tip.classList.add('hidden');
+  });
+}
+
+// Wire navigation buttons (once).
+document.getElementById('day-prev').addEventListener('click', () => dayShiftDate(-1));
+document.getElementById('day-next').addEventListener('click', () => { if (!dayViewingToday()) dayShiftDate(1); });
+document.getElementById('day-today').addEventListener('click', () => { if (!dayViewingToday()) { currentDayDate = null; fetchDay(); } });
+window.addEventListener('resize', () => { if (lastDayData) renderDay(); });
 
 // -- Profile --
 
@@ -918,7 +1213,11 @@ function connect() {
   ws.onmessage = () => {
     // Refetch closed segments — a segment was just opened or closed.
     if (currentHistoryId) fetchHistoryClosed();
-    fetchLeaderboard();
+    if (currentPage === 'leaderboard') {
+      fetchLeaderboard();
+      // Refetch day chart only when viewing today (past dates are immutable).
+      if (dayViewingToday()) fetchDay();
+    }
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
     if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();
   };
@@ -930,11 +1229,15 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// Leaderboard polls on its own schedule, independent of WebSocket.
-setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
-
 // -- Init --
-initPage();
+const currentPage = initPage();
 
 connect();
-fetchLeaderboard();
+
+// Leaderboard and day chart are leaderboard-page-only. Other pages don't fetch or
+// poll them — saves a request per page nav and a 5s poll while on profile/history.
+if (currentPage === 'leaderboard') {
+  fetchLeaderboard();
+  fetchDay();
+  setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
+}

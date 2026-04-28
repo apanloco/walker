@@ -16,7 +16,7 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 1. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
 2. **Dashboard session auth** — The `walker_id` cookie stores the raw user UUID, which is publicly visible in the leaderboard API. Anyone who knows a UUID can impersonate that user by setting the cookie. Fix: use a real session token (random, hashed in DB) instead of the UUID. The existing `tokens` table could be reused. This also affects `/ws/live/{id}` — it currently pushes `weight_kg` (needed for live calorie display), so simply removing auth isn't enough. Needs a design that either: (a) secures the WebSocket with a real token, (b) computes calories server-side and strips weight from the push, or (c) accepts that live calorie data implies weight within a range.
-3. **Dashboard: stop polling when idle** — The leaderboard polls every 5s unconditionally via `setInterval`, even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible.
+3. **Dashboard: stop polling when idle** — While on the leaderboard page, `fetchLeaderboard` polls every 5s via `setInterval` even when the tab is backgrounded or nobody is walking. The WebSocket already notifies on state changes. Consider only polling as a fallback when the WebSocket is disconnected, or pausing the interval when the tab is not visible. (Profile/history/FAQ pages no longer poll — see `currentPage === 'leaderboard'` gate in `app.js`.)
 
 ## License
 
@@ -52,6 +52,7 @@ src/
     history.rs     — GET /api/history/{id} segment timeline
     dashboard.rs   — serves dashboard (include_str! in prod, ServeDir in dev)
     leaderboard.rs — GET /api/leaderboard with live status merge
+    day.rs         — GET /api/day/{date} per-user segments for the day chart
     profile.rs     — GET /api/profile/{id} with year history, records, periods
 dashboard/
   index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, history pages
@@ -268,6 +269,18 @@ All timing constants in one place. Referenced throughout this doc.
 ```
 Returns `{"segment": null}` when the user has no open segment. `incline_percent` is `null` when the device doesn't report incline.
 
+**`GET /api/day/{date}`** — public, no auth. All users with at least one walking segment on that UTC date. Idle segments are omitted (zero kcal). Used by the leaderboard's day chart.
+```json
+{
+  "date": "2026-04-28",
+  "users": [{
+    "id": "uuid", "name": "alice", "avatar_url": "...",
+    "segments": [{"started_at": "...", "duration_s": 300.0, "open": false, "active_calories_kcal": 12.4}]
+  }]
+}
+```
+The endpoint returns *what was true at query time* — for an open segment, `duration_s` is whatever value was last written by a heartbeat. The client extends it to "now" using `started_at` (linear ramp at the segment's kcal/sec rate) so the live line keeps growing between refetches.
+
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
 {
@@ -325,6 +338,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Live status: walking users show `X.X km/h | Y.Y kcal/h | N.N% incline` (or `| no incline` when null or zero). Idle users show `Idle` (plus `| N.N% incline` when nonzero). Themed walking/idle dots with theme-appropriate animation; pipes are muted gray.
 - Clickable names → profile page (redirects to leaderboard if not logged in)
 - Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications
+- **Day chart** (full-width, below the four panels): cumulative active kcal per user across the UTC day. X axis 00:00–24:00 UTC, Y axis kcal (auto-scaled). Each user is a stable color derived from a hash of their UUID (consistent in line + legend + tooltip). Vertical orange dashed "now" indicator on today. Hover anywhere on the chart shows a vertical crosshair + tooltip listing every user with kcal > 0 at that moment, ranked by cumulative kcal descending. Legend below the chart shows each user's color square + name + final kcal (informational only, not clickable) — that's where the "who walked today" information lives, so the title doesn't repeat it. Date navigation: ←, →, ⟲ Today; the next and Today buttons are disabled while viewing today (no peeking at the future). Title shows "Today" or formatted date. Empty days show "No activity" in the plot area. Refetched on `/ws/live` notifications only when viewing today; past days are immutable. The full day endpoint returns all users at once — fine for current scale; per-user incremental updates would require a `/ws/live` payload extension and are deferred until needed.
 
 **Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
@@ -356,7 +370,9 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 
 **Login:** navigating to a login-required page while logged out redirects to `/login`. Login page is server-rendered with buttons for configured providers. After OAuth, `walker_id` cookie is set and user is redirected to `/`. Dev mode: "Dev Login" button available (no auto-login).
 
-**URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/history/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load and shows the right content. Legacy `#hash` URLs redirect automatically.
+**URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/history/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load, returns the page name, and shows the right content. Legacy `#hash` URLs redirect automatically.
+
+**Constraint:** because `app.js` runs on every page, anything at module top level runs on every page. New page-specific fetches, polls, or `setInterval`s must be gated by `currentPage === '<name>'` (or an equivalent signal) — otherwise they'll fire on pages that can't see the result. Reconsider this design if page count grows past ~8, a page needs heavy page-specific JS, or first-paint becomes a complaint.
 
 ### Database (PostgreSQL)
 

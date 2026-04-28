@@ -41,7 +41,7 @@ async fn get_closed_segments(
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
-        return axum::Json(serde_json::json!({"error": "invalid user id"})).into_response();
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": "invalid user id"}))).into_response();
     };
 
     // History is private — only the user themselves can view it.
