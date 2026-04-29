@@ -261,13 +261,44 @@ All timing constants in one place. Referenced throughout this doc.
 
 **`/ws/live`** — notification-only WebSocket. Fires on state changes (segment open/close) + on each disconnect check interval. Sends the string `"update"` with no data — dashboard refetches leaderboard and closed segments via REST on receipt.
 
-**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the open segment JSON on every heartbeat and state change. Generic live feed — the dashboard uses it on the History page, but it's also intended for game integrations and any other client that wants real-time open-segment data.
+**`/ws/live/{id}`** — per-user WebSocket. **Requires login** (`walker_id` cookie). **Own-only:** returns 403 unless the caller is the target user. Pushes the user's live state on every heartbeat and state change.
 ```json
-{"segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "incline_percent": null,
-             "duration_s": 120.5, "weight_kg": 70.0, "active_calories_kcal": 8.5,
-             "distance_m": 107.1, "open": true}}
+{
+  "moving": true,
+  "speed_kmh": 3.2,
+  "incline_percent": null,
+  "weight_kg": 70.0,
+  "today_distance_m": 1247.3,
+  "today_active_calories_kcal": 78.4,
+  "segment": {"started_at": "...", "moving": true, "speed_kmh": 3.2, "incline_percent": null,
+              "duration_s": 120.5, "weight_kg": 70.0, "active_calories_kcal": 8.5,
+              "distance_m": 107.1, "open": true}
+}
 ```
-Returns `{"segment": null}` when the user has no open segment. `incline_percent` is `null` when the device doesn't report incline.
+
+**For game integrators and external consumers, use the top-level fields.** They are computed server-side from the segments table and are designed to be trivially correct:
+- `moving` (bool): `true` while a walking segment is open, `false` otherwise (idle / stopped / disconnected).
+- `speed_kmh` (number): current speed; `0.0` when not walking.
+- `incline_percent` (number or null): current grade; `null` when no segment is open or the device doesn't report incline.
+- `weight_kg` (number): the user's current stored weight.
+- `today_distance_m` (number): `SUM(distance_m)` over today's walking segments (UTC day). Monotonically non-decreasing within a day. Reflects absorption automatically — no spikes, no segment identity tracking required by the consumer.
+- `today_active_calories_kcal` (number): `SUM(active_calories(...))` over today's walking segments. Same semantics.
+
+A consumer that just wants "how far has Daniel walked today, is he walking right now, how fast" reads four fields and is done — no delta accounting, no segment lifecycle awareness.
+
+The `segment` field is the legacy per-segment payload (the open segment row, or `null`). The dashboard's History page uses it to render the live segment card. **External consumers should not rely on `segment`** — its `distance_m` is per-segment and can jump non-physically across absorption events; that's why the cumulative top-level fields exist. `segment.distance_m` may go 100 → 0 → 110 across an idle blip + absorption; `today_distance_m` will go 100 → 100 → 105 across the same sequence (idle contributes 0 to the sum; absorption recomputes the closed walking row upward by the absorbed gap).
+
+If a consumer can't avoid `segment` (e.g., needs per-segment timing for a UI), `segment.started_at` is the segment identity: when it changes between two messages, the segment changed and any cumulative state derived from `distance_m` deltas must reset its baseline. Concretely, with `last_distance: Option<f32>`:
+```
+on message m:
+    if last_distance is None or m.segment.started_at != prev.started_at:
+        last_distance = Some(m.segment.distance_m)   # adopt as new baseline, no delta
+    else:
+        delta = max(0, m.segment.distance_m - last_distance.unwrap())
+        total += delta
+        last_distance = Some(m.segment.distance_m)
+```
+The `Option` matters: resetting to `0` would treat the post-absorption value (e.g. 5005) as a 5005 m delta on the next message. Resetting to `None` adopts it as a baseline so only within-segment deltas (~1–2 m per heartbeat) ever land in `total`. The cost: ≤ `15 s × speed / 3.6` of real walking is silently dropped per absorption event (≤ ~21 m at 5 km/h), because the gap straddles a segment boundary the bridge can't bridge. Consumers that want this gap counted should use `today_distance_m` instead.
 
 **`GET /api/day/{date}`** — public, no auth. All users with at least one walking segment on that UTC date. Idle segments are omitted (zero kcal). Used by the leaderboard's day chart.
 ```json

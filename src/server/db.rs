@@ -382,42 +382,82 @@ pub async fn get_live_statuses(pool: &PgPool) -> anyhow::Result<HashMap<uuid::Uu
         .collect())
 }
 
-/// Get the current open segment for a user as JSON (for WebSocket push).
-/// Returns `{"segment": {...}}` or `{"segment": null}`.
+/// Build the live state JSON for a user: top-level cumulative + status fields
+/// for game integrators, plus the legacy `segment` field for the dashboard.
+/// Returns top-level fields (`moving`, `speed_kmh`, `incline_percent`,
+/// `weight_kg`, `today_distance_m`, `today_active_calories_kcal`) regardless
+/// of whether a segment is open. `segment` is the open-segment row or null.
 pub async fn get_current_segment_json(
     pool: &PgPool,
     user_id: uuid::Uuid,
 ) -> anyhow::Result<String> {
     let row = sqlx::query(
-        "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
-                distance_m
-         FROM segments
-         WHERE user_id = $1 AND open = true",
+        "WITH today_totals AS (
+            SELECT
+                COALESCE(SUM(distance_m), 0)::REAL AS distance_m,
+                COALESCE(SUM(active_calories(speed_kmh, incline_percent, weight_kg, duration_s)), 0)::REAL AS calories_kcal
+            FROM segments
+            WHERE user_id = $1 AND started_at::date = CURRENT_DATE AND moving = true
+         )
+         SELECT
+             u.weight_kg AS user_weight_kg,
+             t.distance_m AS today_distance_m,
+             t.calories_kcal AS today_active_calories_kcal,
+             s.started_at::TEXT AS seg_started_at,
+             s.moving AS seg_moving,
+             s.speed_kmh AS seg_speed_kmh,
+             s.incline_percent AS seg_incline_percent,
+             s.duration_s AS seg_duration_s,
+             s.weight_kg AS seg_weight_kg,
+             s.distance_m AS seg_distance_m,
+             active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s) AS seg_active_calories_kcal
+         FROM users u
+         CROSS JOIN today_totals t
+         LEFT JOIN segments s ON s.user_id = u.id AND s.open = true
+         WHERE u.id = $1",
     )
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
 
-    let json = match row {
-        Some(r) => {
-            serde_json::json!({
-                "segment": {
-                    "started_at": r.get::<String, _>("started_at"),
-                    "moving": r.get::<bool, _>("moving"),
-                    "speed_kmh": r.get::<f32, _>("speed_kmh"),
-                    "incline_percent": r.get::<Option<f32>, _>("incline_percent"),
-                    "duration_s": r.get::<f32, _>("duration_s"),
-                    "weight_kg": r.get::<f32, _>("weight_kg"),
-                    "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
-                    "distance_m": r.get::<f32, _>("distance_m"),
-                    "open": true,
-                }
-            })
-        }
-        None => serde_json::json!({"segment": null}),
+    let Some(r) = row else {
+        // User not found — should not happen in practice (caller validates).
+        return Ok(serde_json::json!({"segment": null}).to_string());
     };
-    Ok(json.to_string())
+
+    let seg_started_at: Option<String> = r.get("seg_started_at");
+    let segment = match seg_started_at {
+        Some(started_at) => serde_json::json!({
+            "started_at": started_at,
+            "moving": r.get::<bool, _>("seg_moving"),
+            "speed_kmh": r.get::<f32, _>("seg_speed_kmh"),
+            "incline_percent": r.get::<Option<f32>, _>("seg_incline_percent"),
+            "duration_s": r.get::<f32, _>("seg_duration_s"),
+            "weight_kg": r.get::<f32, _>("seg_weight_kg"),
+            "active_calories_kcal": r.get::<f32, _>("seg_active_calories_kcal"),
+            "distance_m": r.get::<f32, _>("seg_distance_m"),
+            "open": true,
+        }),
+        None => serde_json::Value::Null,
+    };
+
+    // Top-level live-status fields: take from the open segment when present,
+    // otherwise sensible idle defaults (no segment = not currently walking).
+    let moving = r.get::<Option<bool>, _>("seg_moving").unwrap_or(false);
+    let speed_kmh = r.get::<Option<f32>, _>("seg_speed_kmh").unwrap_or(0.0);
+    let incline_percent: Option<f32> = r.get("seg_incline_percent");
+    let weight_kg: f32 = r.get("user_weight_kg");
+
+    Ok(serde_json::json!({
+        "moving": moving,
+        "speed_kmh": speed_kmh,
+        "incline_percent": incline_percent,
+        "weight_kg": weight_kg,
+        "today_distance_m": r.get::<f32, _>("today_distance_m"),
+        "today_active_calories_kcal": r.get::<f32, _>("today_active_calories_kcal"),
+        "segment": segment,
+    })
+    .to_string())
 }
 
 // -- Seed dev data --
