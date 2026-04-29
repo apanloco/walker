@@ -250,8 +250,8 @@ All timing constants in one place. Referenced throughout this doc.
 | Server disconnect check interval | 5s | live.rs | How often the server checks for stale heartbeats |
 | Server disconnect threshold | 30s | live.rs | No heartbeat for this long → close segment |
 | Crash recovery threshold | 60s | mod.rs | On startup, close segments stale longer than this |
-| False idle max age | 10s | update.rs | Short idle segments below this are absorbed |
-| False idle reopen window | 15s | update.rs | Previous walking segment must be this recent to reopen |
+| False idle max age | 15s | update.rs | Short idle segments below this are absorbed |
+| False idle reopen window | 20s | update.rs | Previous walking segment must be this recent to reopen |
 | Session gap | 60 min | app.js | Gap between segments that creates a new session |
 | Dashboard leaderboard poll | 5s | app.js | Client-side polling interval for leaderboard |
 | Token expiry | 180 days | db.rs | Bearer tokens expire after this |
