@@ -189,11 +189,22 @@ pub async fn open_segment(
 /// Maximum age (seconds) of a false idle segment that can be absorbed back into
 /// the previous walking segment. Keeps idle detection fast on the client while
 /// cleaning up sensor noise on the server.
-pub const MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS: f64 = 10.0;
+pub const MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS: f64 = 15.0;
 
 /// Maximum age (seconds) of the previous walking segment's last heartbeat for it
-/// to be eligible for reopening during idle absorption.
-const MAX_ABSORB_REOPEN_WINDOW_SECS: f64 = 15.0;
+/// to be eligible for reopening during idle absorption. Must exceed the flaky
+/// idle max age by enough headroom to cover heartbeat/transaction lag — see the
+/// const assertion below.
+const MAX_ABSORB_REOPEN_WINDOW_SECS: f64 = 20.0;
+
+// The reopen window must be strictly larger than the flaky idle max age, because
+// the previous walking segment's last_heartbeat_at is set when the idle began —
+// so at absorption time it is exactly as old as the idle segment. Without
+// headroom, an idle near the flaky upper bound would race the reopen check.
+const _: () = assert!(
+    MAX_ABSORB_REOPEN_WINDOW_SECS >= MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS + 5.0,
+    "MAX_ABSORB_REOPEN_WINDOW_SECS must be at least 5s greater than MAX_ABSORB_FLAKY_IDLE_SEGMENT_SECS"
+);
 
 /// Delete a segment by ID. Returns true if a row was deleted.
 pub async fn delete_segment(pool: &PgPool, segment_id: i64) -> anyhow::Result<bool> {
