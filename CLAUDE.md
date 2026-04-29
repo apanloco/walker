@@ -280,7 +280,7 @@ All timing constants in one place. Referenced throughout this doc.
 
 **For game integrators and external consumers, use the top-level fields.** They are computed server-side from the segments table and are designed to be trivially correct:
 - `moving` (bool): `true` while a walking segment is open, `false` otherwise (idle / stopped / disconnected).
-- `speed_kmh` (number): current speed; `0.0` when not walking.
+- `speed_kmh` (number): the user's current effective speed; `0.0` when not walking. Distinct from `segment.speed_kmh`, which is the belt speed of the open segment row and can stay non-zero through an idle segment (the belt keeps spinning when you step off).
 - `incline_percent` (number or null): current grade; `null` when no segment is open or the device doesn't report incline.
 - `weight_kg` (number): the user's current stored weight.
 - `today_distance_m` (number): `SUM(distance_m)` over today's walking segments (UTC day). Monotonically non-decreasing within a day. Reflects absorption automatically — no spikes, no segment identity tracking required by the consumer.
