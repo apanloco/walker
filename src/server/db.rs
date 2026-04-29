@@ -443,8 +443,15 @@ pub async fn get_current_segment_json(
 
     // Top-level live-status fields: take from the open segment when present,
     // otherwise sensible idle defaults (no segment = not currently walking).
+    // speed_kmh is the user's effective speed (0 when not walking), distinct
+    // from segment.speed_kmh which is the belt speed of the segment row and
+    // can be non-zero during an idle segment.
     let moving = r.get::<Option<bool>, _>("seg_moving").unwrap_or(false);
-    let speed_kmh = r.get::<Option<f32>, _>("seg_speed_kmh").unwrap_or(0.0);
+    let speed_kmh = if moving {
+        r.get::<Option<f32>, _>("seg_speed_kmh").unwrap_or(0.0)
+    } else {
+        0.0
+    };
     let incline_percent: Option<f32> = r.get("seg_incline_percent");
     let weight_kg: f32 = r.get("user_weight_kg");
 
