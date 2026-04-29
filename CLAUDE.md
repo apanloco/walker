@@ -131,6 +131,8 @@ Sent on state change + every heartbeat interval while connected. Client does **n
 
 **Rate limiting:** Authenticated endpoints are rate-limited per Bearer token using `tower_governor` (GCRA algorithm). 10 requests/second sustained, burst of 20. Requests without a Bearer token share a single "unauthenticated" bucket (the handler rejects them with 401 anyway, but this prevents unauthenticated spam). Rate limit is per-token, not per-IP, so multiple users behind the same NAT are not affected.
 
+**Send serialization (client):** The CLI reporter funnels all `/api/update` POSTs through a single mpsc channel into a worker task — at most one HTTP request is in flight at a time. Reqwest's keep-alive pool reuses one TCP connection for sequential requests, so the server receives them strictly in send order. This prevents the unique-index races on `idx_segments_one_open` and the out-of-order state-change trajectories (e.g., `1.0 → 1.2 → 1.1 → 1.2` from quickly tapping speed-up twice) that concurrent in-flight POSTs would otherwise produce.
+
 ### Segment-Based Tracking
 
 #### Why
