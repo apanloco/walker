@@ -1,18 +1,27 @@
 use crate::activity::ActivityState;
 use std::time::Instant;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-/// Sends updates to the walker server via HTTP POST.
-/// Only sends on state changes or every heartbeat_interval seconds.
+/// Sends updates to the walker server via HTTP POST. All sends are funneled
+/// through a single sender task: at most one HTTP request is in flight at a
+/// time. Reqwest's keep-alive pool reuses one TCP connection for sequential
+/// requests, so the server receives our updates strictly in send order.
+/// Concurrent in-flight POSTs (the previous fire-and-forget approach) could
+/// arrive out of order on the server and race on the segments unique partial
+/// index, producing duplicate-key warns and lost state changes.
 pub struct ServerReporter {
-    client: reqwest::Client,
-    server_url: String,
-    token: String,
+    tx: mpsc::UnboundedSender<UpdateMsg>,
     last_sent: Option<SentState>,
     last_send_time: Option<Instant>,
     heartbeat_secs: f64,
     send_count: u64,
     count_start: Instant,
+}
+
+struct UpdateMsg {
+    state: &'static str,
+    speed_kmh: f64,
 }
 
 #[derive(Clone, PartialEq)]
@@ -23,10 +32,39 @@ struct SentState {
 
 impl ServerReporter {
     pub fn new(server_url: String, token: String) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<UpdateMsg>();
+        let client = reqwest::Client::new();
+        let url = format!("{server_url}/api/update");
+        let auth = format!("Bearer {token}");
+
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                let res = client
+                    .post(&url)
+                    .header("Authorization", &auth)
+                    .json(&serde_json::json!({
+                        "state": msg.state,
+                        "speed_kmh": msg.speed_kmh,
+                    }))
+                    .send()
+                    .await;
+
+                match res {
+                    Ok(r) if r.status().is_success() => {
+                        debug!("Update sent to server");
+                    }
+                    Ok(r) => {
+                        warn!(status = %r.status(), "Server rejected update");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to send update to server");
+                    }
+                }
+            }
+        });
+
         Self {
-            client: reqwest::Client::new(),
-            server_url,
-            token,
+            tx,
             last_sent: None,
             last_send_time: None,
             heartbeat_secs: 1.0,
@@ -126,35 +164,8 @@ impl ServerReporter {
         self.fire_send("stopped", 0.0);
     }
 
-    fn fire_send(&self, state: &str, speed_kmh: f64) {
-        let url = format!("{}/api/update", self.server_url);
-        let token = self.token.clone();
-        let state = state.to_string();
-        let client = self.client.clone();
-
-        // Fire-and-forget — don't block the BLE loop.
-        tokio::spawn(async move {
-            let res = client
-                .post(&url)
-                .header("Authorization", format!("Bearer {token}"))
-                .json(&serde_json::json!({
-                    "state": state,
-                    "speed_kmh": speed_kmh,
-                }))
-                .send()
-                .await;
-
-            match res {
-                Ok(r) if r.status().is_success() => {
-                    debug!("Update sent to server");
-                }
-                Ok(r) => {
-                    warn!(status = %r.status(), "Server rejected update");
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to send update to server");
-                }
-            }
-        });
+    fn fire_send(&self, state: &'static str, speed_kmh: f64) {
+        // Non-blocking enqueue. The sender task drains and POSTs in order.
+        let _ = self.tx.send(UpdateMsg { state, speed_kmh });
     }
 }
