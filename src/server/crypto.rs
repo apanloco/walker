@@ -1,10 +1,13 @@
-use aes_gcm::{Aes256Gcm, aead::{Aead, KeyInit, generic_array::GenericArray}};
+use aes_gcm::{
+    Aes256Gcm,
+    aead::{Aead, KeyInit, generic_array::GenericArray},
+};
 
 /// Encrypts `plaintext` with AES-256-GCM using a fresh random 12-byte nonce.
 /// Returns `"enc:<hex(nonce || ciphertext)>"`.
 pub fn encrypt(key: &[u8; 32], plaintext: &str) -> anyhow::Result<String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|_| anyhow::anyhow!("Invalid key length"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| anyhow::anyhow!("Invalid key length"))?;
     let nonce_arr: [u8; 12] = rand::random();
     // GenericArray length (U12) is inferred from Aes256Gcm::encrypt's expected nonce type.
     let nonce = GenericArray::from_slice(&nonce_arr);
@@ -27,14 +30,13 @@ pub fn decrypt(key: &[u8; 32], value: &str) -> anyhow::Result<String> {
         anyhow::bail!("Encrypted value too short");
     }
     let (nonce_bytes, ciphertext) = bytes.split_at(12);
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|_| anyhow::anyhow!("Invalid key length"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| anyhow::anyhow!("Invalid key length"))?;
     let nonce = GenericArray::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| anyhow::anyhow!("Decryption failed (wrong key or corrupted data)"))?;
-    String::from_utf8(plaintext)
-        .map_err(|e| anyhow::anyhow!("Decrypted value is not UTF-8: {e}"))
+    String::from_utf8(plaintext).map_err(|e| anyhow::anyhow!("Decrypted value is not UTF-8: {e}"))
 }
 
 /// Parses a 64-character lowercase hex string into a 32-byte AES-256 key.
@@ -49,7 +51,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> anyhow::Result<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         anyhow::bail!("Odd-length hex string");
     }
     (0..s.len())
@@ -74,7 +76,10 @@ mod tests {
         let key = test_key();
         let encrypted = encrypt(&key, "my_strava_client_secret").unwrap();
         assert!(encrypted.starts_with("enc:"));
-        assert_eq!(decrypt(&key, &encrypted).unwrap(), "my_strava_client_secret");
+        assert_eq!(
+            decrypt(&key, &encrypted).unwrap(),
+            "my_strava_client_secret"
+        );
     }
 
     #[test]
@@ -89,7 +94,10 @@ mod tests {
     fn plaintext_passthrough() {
         let key = test_key();
         // Values without the "enc:" prefix are returned as-is (migration compat).
-        assert_eq!(decrypt(&key, "old_plaintext_token").unwrap(), "old_plaintext_token");
+        assert_eq!(
+            decrypt(&key, "old_plaintext_token").unwrap(),
+            "old_plaintext_token"
+        );
     }
 
     #[test]

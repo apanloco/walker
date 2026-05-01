@@ -396,8 +396,7 @@ async fn import_activities_since(
 
             // Fetch the detailed activity to get average_grade (not in the list response).
             let detail_url = format!("https://www.strava.com/api/v3/activities/{id}");
-            let (detail_status, detail_body) =
-                strava_get(&client, &detail_url, &token).await?;
+            let (detail_status, detail_body) = strava_get(&client, &detail_url, &token).await?;
             tracing::debug!(user = %user_id, id, %detail_status, "Strava detail API response");
             if !detail_status.is_success() {
                 anyhow::bail!(
