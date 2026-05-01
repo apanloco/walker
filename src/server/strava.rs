@@ -355,10 +355,7 @@ async fn import_activities_since(
         let url = format!(
             "https://www.strava.com/api/v3/athlete/activities?after={after}&per_page=200&page={page}"
         );
-        let resp = client.get(&url).bearer_auth(&token).send().await?;
-
-        let status = resp.status();
-        let body = resp.text().await?;
+        let (status, body) = strava_get(&client, &url, &token).await?;
         tracing::debug!(user = %user_id, page, %status, "Strava API response");
 
         if !status.is_success() {
@@ -399,9 +396,8 @@ async fn import_activities_since(
 
             // Fetch the detailed activity to get average_grade (not in the list response).
             let detail_url = format!("https://www.strava.com/api/v3/activities/{id}");
-            let detail_resp = client.get(&detail_url).bearer_auth(&token).send().await?;
-            let detail_status = detail_resp.status();
-            let detail_body = detail_resp.text().await?;
+            let (detail_status, detail_body) =
+                strava_get(&client, &detail_url, &token).await?;
             tracing::debug!(user = %user_id, id, %detail_status, "Strava detail API response");
             if !detail_status.is_success() {
                 anyhow::bail!(
@@ -512,8 +508,50 @@ fn unix_now() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock before epoch")
         .as_secs() as i64
+}
+
+/// Seconds remaining until the next Strava 15-minute rate-limit window boundary.
+/// Strava windows reset at :00, :15, :30, :45 UTC. Used as a fallback wait
+/// when the 429 response doesn't include a Retry-After header.
+fn secs_until_next_15min_boundary() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_secs();
+    let secs_into_window = elapsed % 900; // 15 min = 900 s
+    (900 - secs_into_window) + 5 // +5 s buffer
+}
+
+/// GET a Strava API URL, retrying transparently on 429 (rate limit exceeded).
+/// Sleeps for the Retry-After value from the response header, or until the
+/// next 15-minute window boundary if the header is absent.
+async fn strava_get(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> anyhow::Result<(reqwest::StatusCode, String)> {
+    loop {
+        let resp = client.get(url).bearer_auth(token).send().await?;
+        let status = resp.status();
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let wait_secs = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or_else(secs_until_next_15min_boundary);
+            warn!(wait_secs, %url, "Strava rate limit hit — waiting before retry");
+            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+            continue;
+        }
+
+        let body = resp.text().await?;
+        return Ok((status, body));
+    }
 }
 
 /// Determine the `after` timestamp for a Strava sync.
