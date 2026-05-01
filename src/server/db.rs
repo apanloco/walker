@@ -506,14 +506,16 @@ pub async fn update_strava_tokens(
     pool: &PgPool,
     user_id: uuid::Uuid,
     access_token: &str,
+    refresh_token: &str,
     expires_at_unix: i64,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "UPDATE strava_connections SET access_token = $2, expires_at = to_timestamp($3)
+        "UPDATE strava_connections SET access_token = $2, refresh_token = $3, expires_at = to_timestamp($4)
          WHERE user_id = $1",
     )
     .bind(user_id)
     .bind(access_token)
+    .bind(refresh_token)
     .bind(expires_at_unix)
     .execute(pool)
     .await?;

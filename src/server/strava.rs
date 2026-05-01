@@ -289,6 +289,7 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
         &state.live.db_pool,
         user_id,
         &resp.access_token,
+        &resp.refresh_token,
         resp.expires_at,
     )
     .await?;
