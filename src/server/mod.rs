@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod crypto;
 pub mod dashboard;
 pub mod day;
 pub mod db;
@@ -32,6 +33,7 @@ pub struct ServerConfig {
     pub google_client_id: Option<String>,
     pub google_client_secret: Option<String>,
     pub database_url: Option<String>,
+    pub encryption_key: Option<String>,
     pub dev: bool,
 }
 
@@ -56,6 +58,20 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             "  Google OAuth: not configured (set WALKER_GOOGLE_CLIENT_ID + WALKER_GOOGLE_CLIENT_SECRET)"
         );
     }
+    let encryption_key: Option<[u8; 32]> = match config.encryption_key.as_deref() {
+        Some(hex) => {
+            let key = crypto::parse_key(hex)
+                .map_err(|e| anyhow::anyhow!("Invalid WALKER_ENCRYPTION_KEY: {e}"))?;
+            info!("  Strava encryption: enabled (WALKER_ENCRYPTION_KEY set)");
+            Some(key)
+        }
+        None => {
+            tracing::warn!(
+                "  WALKER_ENCRYPTION_KEY not set — Strava client_secret stored as plaintext"
+            );
+            None
+        }
+    };
     info!("  Strava: per-user credentials (users supply their own Strava app)");
     if !has_github && !has_google && !config.dev {
         tracing::warn!(
@@ -117,6 +133,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     let strava_state: strava::SharedStrava = Arc::new(strava::StravaState {
         live: live_ctx.clone(),
+        encryption_key,
     });
 
     // Lightweight timer for disconnect detection.

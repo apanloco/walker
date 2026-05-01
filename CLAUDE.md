@@ -47,6 +47,7 @@ src/
   server/
     mod.rs         — server startup, wiring, dev setup, startup health checks
     auth.rs        — OAuth: device code flow (CLI) + web login (dashboard), GitHub/Google
+    crypto.rs      — AES-256-GCM encrypt/decrypt for Strava client_secret (WALKER_ENCRYPTION_KEY)
     db.rs          — PostgreSQL: migrations, segment CRUD, queries, dev seed data
     update.rs      — POST /api/update, segment lifecycle (open/close/heartbeat)
     live.rs        — /ws/live + /ws/live/{id} WebSockets, simulate register, disconnect checker
@@ -618,6 +619,7 @@ walker -v trace walk                 # set log verbosity (trace, debug, info, wa
 | `WALKER_GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `WALKER_GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `WALKER_GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `WALKER_ENCRYPTION_KEY` | AES-256 key for Strava `client_secret` encryption — 64 lowercase hex chars (32 bytes). Generate with `openssl rand -hex 32`. Optional but strongly recommended in production: if unset, `client_secret` is stored as plaintext with a startup warning. Existing plaintext values are read correctly if the key is later added (the new value is encrypted on next reconnect). |
 
 ## Local Development
 

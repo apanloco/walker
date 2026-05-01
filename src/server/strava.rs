@@ -14,6 +14,7 @@ use super::live::SharedLive;
 
 pub struct StravaState {
     pub live: SharedLive,
+    pub encryption_key: Option<[u8; 32]>,
 }
 
 pub type SharedStrava = Arc<StravaState>;
@@ -179,12 +180,23 @@ async fn connect(
             .into_response();
     };
 
+    let stored_secret = match &state.encryption_key {
+        Some(key) => match super::crypto::encrypt(key, &body.client_secret) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to encrypt client_secret");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
+            }
+        },
+        None => body.client_secret.clone(),
+    };
+
     if let Err(e) = db::upsert_strava_connection(
         &state.live.db_pool,
         user_id,
         athlete.id,
         &body.client_id,
-        &body.client_secret,
+        &stored_secret,
         &token_data.access_token,
         &token_data.refresh_token,
         token_data.expires_at,
@@ -271,12 +283,17 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
         return Ok(conn.access_token);
     }
 
+    let client_secret = match &state.encryption_key {
+        Some(key) => super::crypto::decrypt(key, &conn.client_secret)?,
+        None => conn.client_secret.clone(),
+    };
+
     let client = reqwest::Client::new();
     let resp = client
         .post("https://www.strava.com/api/v3/oauth/token")
         .form(&[
             ("client_id", conn.client_id.as_str()),
-            ("client_secret", conn.client_secret.as_str()),
+            ("client_secret", client_secret.as_str()),
             ("grant_type", "refresh_token"),
             ("refresh_token", conn.refresh_token.as_str()),
         ])

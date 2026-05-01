@@ -7,7 +7,7 @@ license = "MIT"
 [features]
 default = ["client", "server"]
 client = ["dep:btleplug", "dep:colored", "dep:futures", "dep:async-trait", "dep:dirs", "dep:open", "dep:crossterm"]
-server = ["dep:axum", "dep:tower-http", "dep:sqlx", "dep:tower_governor"]
+server = ["dep:axum", "dep:tower-http", "dep:sqlx", "dep:tower_governor", "dep:aes-gcm"]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
@@ -34,6 +34,7 @@ axum = { version = "0.8.8", features = ["json", "ws"], optional = true }
 tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "uuid", "json"], optional = true }
 tower_governor = { version = "0.8", optional = true }
+aes-gcm = { version = "0.10", optional = true }
 
 # Shared
 rand = "0.10.0"
