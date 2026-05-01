@@ -72,7 +72,6 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             None
         }
     };
-    info!("  Strava: per-user credentials (users supply their own Strava app)");
     if !has_github && !has_google && !config.dev {
         tracing::warn!(
             "  No login providers configured! Users won't be able to log in. Use --dev for testing."
