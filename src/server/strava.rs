@@ -54,27 +54,36 @@ async fn strava_auth_helper(
     let code = params.get("code").map(|s| s.as_str()).unwrap_or("");
     let error = params.get("error").map(|s| s.as_str()).unwrap_or("");
 
-    let code_json = serde_json::to_string(code).unwrap_or_else(|_| "\"\"".to_string());
-    let error_json = serde_json::to_string(error).unwrap_or_else(|_| "\"\"".to_string());
-    // Strava codes are alphanumeric — safe to embed in HTML directly.
-    let code_html = code
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    fn html_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+    let code_attr = html_escape(code);
+    let error_attr = html_escape(error);
 
     let body = format!(
         r#"<!DOCTYPE html><html><head><title>Strava Auth</title></head>
-<body style="font-family:monospace;padding:2rem">
+<body data-code="{code_attr}" data-error="{error_attr}" style="font-family:monospace;padding:2rem">
 <p id="msg"></p>
-<pre id="code-pre" style="background:#eee;padding:1rem;border-radius:4px;word-break:break-all;margin-top:0.5rem;display:none">{code_html}</pre>
+<pre id="code-pre" style="background:#eee;padding:1rem;border-radius:4px;word-break:break-all;margin-top:0.5rem;display:none">{code_attr}</pre>
 <script>
 (function() {{
-  var code = {code_json};
-  var error = {error_json};
+  var code = document.body.dataset.code;
+  var error = document.body.dataset.error;
   var msg = document.getElementById('msg');
   var codePre = document.getElementById('code-pre');
   if (error) {{
-    msg.innerHTML = '<span style="color:red">Strava error: <strong>' + error + '</strong></span><br>Close this tab and try again.';
+    var span = document.createElement('span');
+    span.style.color = 'red';
+    var strong = document.createElement('strong');
+    strong.textContent = error;
+    span.textContent = 'Strava error: ';
+    span.appendChild(strong);
+    msg.appendChild(span);
+    msg.appendChild(document.createElement('br'));
+    msg.appendChild(document.createTextNode('Close this tab and try again.'));
     return;
   }}
   // Always show the code so the user can copy it manually if needed.
