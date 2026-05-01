@@ -142,7 +142,10 @@ async fn connect(
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
 
     // Exchange the authorization code for tokens. The response includes the athlete
     // object with id and name — no separate /athlete API call needed.
@@ -300,7 +303,10 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
     let client_secret = decrypt_field(key, &conn.client_secret)?;
     let refresh_token = decrypt_field(key, &conn.refresh_token)?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
     let resp = client
         .post("https://www.strava.com/api/v3/oauth/token")
         .form(&[
@@ -326,10 +332,8 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
     Ok(resp.access_token)
 }
 
-/// Fetch Walk, Hike, and treadmill-run activities since `after` (Unix timestamp) and import them.
-/// Excluded: outdoor Run, TrailRun, rides, swims, and everything else.
-/// Treadmill runs are identified by sport_type="Run"/"VirtualRun" with trainer=true,
-/// or sport_type="VirtualRun" (always indoor).
+/// Fetch Walk, Hike, Run, and VirtualRun activities since `after` (Unix timestamp) and import them.
+/// Both indoor and outdoor. Excluded: TrailRun, rides, swims, and everything else.
 /// Returns the count of newly imported segments.
 async fn import_activities_since(
     state: &StravaState,
@@ -338,7 +342,10 @@ async fn import_activities_since(
 ) -> anyhow::Result<usize> {
     let token = fresh_token(state, user_id).await?;
     let weight_kg = db::get_user_weight(&state.live.db_pool, user_id).await?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
     let mut imported = 0;
     let mut page = 1u32;
 
