@@ -1,3 +1,4 @@
 /target
 /memory
+/.claude
 start_dev_server.sh

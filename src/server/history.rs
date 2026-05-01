@@ -11,7 +11,9 @@ use sqlx::Row;
 use super::{db, live::SharedLive};
 
 pub fn routes() -> Router<SharedLive> {
-    Router::new().route("/api/history/{id}", get(get_closed_segments))
+    Router::new()
+        .route("/api/history/{id}", get(get_closed_segments))
+        .route("/api/activity/raw/{activity_id}", get(get_raw_activity))
 }
 
 #[derive(Deserialize)]
@@ -41,7 +43,11 @@ async fn get_closed_segments(
     }
 
     let Ok(id) = uuid::Uuid::parse_str(&id_str) else {
-        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": "invalid user id"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error": "invalid user id"})),
+        )
+            .into_response();
     };
 
     // History is private — only the user themselves can view it.
@@ -57,24 +63,28 @@ async fn get_closed_segments(
 
     let rows = if date_filter.is_empty() {
         sqlx::query(
-            "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                    active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
-                    distance_m
-             FROM segments
-             WHERE user_id = $1 AND started_at::date = CURRENT_DATE AND open = false
-             ORDER BY started_at ASC",
+            "SELECT s.started_at::TEXT, s.moving, s.speed_kmh, s.incline_percent, s.duration_s, s.weight_kg,
+                    active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s) AS active_calories_kcal,
+                    s.distance_m, s.source, s.activity_id,
+                    ia.name AS activity_name, ia.source_url
+             FROM segments s
+             LEFT JOIN imported_activities ia ON ia.id = s.activity_id
+             WHERE s.user_id = $1 AND s.started_at::date = CURRENT_DATE AND s.open = false
+             ORDER BY s.started_at ASC",
         )
         .bind(id)
         .fetch_all(pool.as_ref())
         .await
     } else {
         sqlx::query(
-            "SELECT started_at::TEXT, moving, speed_kmh, incline_percent, duration_s, weight_kg,
-                    active_calories(speed_kmh, incline_percent, weight_kg, duration_s) AS active_calories_kcal,
-                    distance_m
-             FROM segments
-             WHERE user_id = $1 AND started_at::date = $2::date AND open = false
-             ORDER BY started_at ASC",
+            "SELECT s.started_at::TEXT, s.moving, s.speed_kmh, s.incline_percent, s.duration_s, s.weight_kg,
+                    active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s) AS active_calories_kcal,
+                    s.distance_m, s.source, s.activity_id,
+                    ia.name AS activity_name, ia.source_url
+             FROM segments s
+             LEFT JOIN imported_activities ia ON ia.id = s.activity_id
+             WHERE s.user_id = $1 AND s.started_at::date = $2::date AND s.open = false
+             ORDER BY s.started_at ASC",
         )
         .bind(id)
         .bind(&date_filter)
@@ -84,7 +94,8 @@ async fn get_closed_segments(
 
     match rows {
         Ok(rows) => {
-            let segments: Vec<serde_json::Value> = rows.iter().map(segment_json).collect();
+            let segments: Vec<serde_json::Value> =
+                rows.iter().map(|r| segment_json(r, false)).collect();
             axum::Json(serde_json::json!({ "segments": segments })).into_response()
         }
         Err(e) => {
@@ -94,7 +105,50 @@ async fn get_closed_segments(
     }
 }
 
-fn segment_json(r: &sqlx::postgres::PgRow) -> serde_json::Value {
+/// Raw JSON for an imported activity. Own-only: verifies the activity belongs to the caller.
+async fn get_raw_activity(
+    State(ctx): State<SharedLive>,
+    headers: axum::http::HeaderMap,
+    Path(activity_id): Path<i64>,
+) -> impl IntoResponse {
+    let pool = &ctx.db_pool;
+
+    let Some(caller) = super::cookie_user_id(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
+    // Ownership check: the activity must belong to the caller via a segment.
+    let row = sqlx::query(
+        "SELECT ia.raw_data
+         FROM imported_activities ia
+         JOIN segments s ON s.activity_id = ia.id
+         WHERE ia.id = $1 AND s.user_id = $2
+         LIMIT 1",
+    )
+    .bind(activity_id)
+    .bind(caller)
+    .fetch_optional(pool.as_ref())
+    .await;
+
+    match row {
+        Ok(Some(r)) => {
+            let raw: serde_json::Value = r.get("raw_data");
+            let body = serde_json::to_string_pretty(&raw).unwrap_or_default();
+            axum::response::Response::builder()
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap()
+                .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "raw activity query failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+fn segment_json(r: &sqlx::postgres::PgRow, open: bool) -> serde_json::Value {
     serde_json::json!({
         "started_at": r.get::<String, _>("started_at"),
         "moving": r.get::<bool, _>("moving"),
@@ -104,6 +158,10 @@ fn segment_json(r: &sqlx::postgres::PgRow) -> serde_json::Value {
         "weight_kg": r.get::<f32, _>("weight_kg"),
         "active_calories_kcal": r.get::<f32, _>("active_calories_kcal"),
         "distance_m": r.get::<f32, _>("distance_m"),
-        "open": false,
+        "source": r.get::<String, _>("source"),
+        "activity_id": r.get::<Option<i64>, _>("activity_id"),
+        "activity_name": r.get::<Option<String>, _>("activity_name"),
+        "source_url": r.get::<Option<String>, _>("source_url"),
+        "open": open,
     })
 }

@@ -163,6 +163,9 @@ enum Command {
         /// PostgreSQL connection string
         #[arg(long, env = "DATABASE_URL")]
         database_url: Option<String>,
+        /// AES-256 encryption key for Strava client_secret (64 hex chars = 32 bytes)
+        #[arg(long, env = "WALKER_ENCRYPTION_KEY")]
+        encryption_key: Option<String>,
         /// Dev mode: auto-create a test user (no OAuth needed)
         #[arg(long)]
         dev: bool,
@@ -219,6 +222,7 @@ async fn main() -> anyhow::Result<()> {
             google_client_id,
             google_client_secret,
             database_url,
+            encryption_key,
             dev,
         } => {
             server::run(server::ServerConfig {
@@ -231,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
                 database_url: database_url.or_else(|| {
                     dev.then(|| "postgres://postgres:walker@localhost/walker".to_string())
                 }),
+                encryption_key,
                 dev,
             })
             .await?;
