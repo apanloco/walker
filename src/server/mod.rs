@@ -67,7 +67,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         }
         None => {
             tracing::warn!(
-                "  WALKER_ENCRYPTION_KEY not set — Strava client_secret stored as plaintext"
+                "  WALKER_ENCRYPTION_KEY not set — Strava credentials (client_secret, access_token, refresh_token) stored as plaintext"
             );
             None
         }
