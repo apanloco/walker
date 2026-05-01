@@ -46,7 +46,7 @@ src/
   server/
     mod.rs         — server startup, wiring, dev setup, startup health checks
     auth.rs        — OAuth: device code flow (CLI) + web login (dashboard), GitHub/Google
-    crypto.rs      — AES-256-GCM encrypt/decrypt for Strava client_secret (WALKER_ENCRYPTION_KEY)
+    crypto.rs      — AES-256-GCM encrypt/decrypt for Strava credentials (client_secret, access_token, refresh_token) via WALKER_ENCRYPTION_KEY
     db.rs          — PostgreSQL: migrations, segment CRUD, queries, dev seed data
     update.rs      — POST /api/update, segment lifecycle (open/close/heartbeat)
     live.rs        — /ws/live + /ws/live/{id} WebSockets, simulate register, disconnect checker
@@ -55,7 +55,7 @@ src/
     leaderboard.rs — GET /api/leaderboard with live status merge
     day.rs         — GET /api/day/{date} per-user segments for the day chart
     profile.rs     — GET /api/profile/{id} with year history, records, periods
-    strava.rs      — Strava account linking, activity import, webhook handler
+    strava.rs      — Strava account linking, activity import, on-demand sync
 dashboard/
   index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, history pages
   app.js           — leaderboard, profile with heatmap, history timeline, WebSocket, theme switcher
@@ -618,7 +618,7 @@ walker -v trace walk                 # set log verbosity (trace, debug, info, wa
 | `WALKER_GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `WALKER_GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `WALKER_GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `WALKER_ENCRYPTION_KEY` | AES-256 key for Strava `client_secret` encryption — 64 lowercase hex chars (32 bytes). Generate with `openssl rand -hex 32`. Optional but strongly recommended in production: if unset, `client_secret` is stored as plaintext with a startup warning. Existing plaintext values are read correctly if the key is later added (the new value is encrypted on next reconnect). |
+| `WALKER_ENCRYPTION_KEY` | AES-256 key for Strava credential encryption (`client_secret`, `access_token`, `refresh_token`) — 64 lowercase hex chars (32 bytes). Generate with `openssl rand -hex 32`. Optional but strongly recommended in production: if unset, credentials are stored as plaintext with a startup warning. Existing plaintext values are read correctly if the key is later added (re-encrypted on next reconnect). |
 
 ## Local Development
 
@@ -661,8 +661,8 @@ Strava is **not a login provider** — users authenticate via GitHub/Google as n
 1. User creates a Strava API app at strava.com/settings/api, sets "Authorization Callback Domain" to the Walker server hostname
 2. On Walker profile page, user clicks "Connect", enters their Client ID and Client Secret
 3. User clicks "Authorize on Strava" — Walker opens a new tab to the Strava OAuth page for the user's app, with `redirect_uri={walker_origin}/strava-auth` and `scope=activity:read_all`
-4. After authorizing, Strava redirects the new tab to `/strava-auth?code=XXX` — Walker serves a page that sends `postMessage({stravaCode: code}, location.origin)` to the opener (the profile page) and closes itself
-5. The profile page receives the postMessage, auto-populates the code field, and submits immediately. Falls back to showing the code for manual paste if there is no opener (direct navigation to `/strava-auth`).
+4. After authorizing, Strava redirects the new tab to `/strava-auth?code=XXX` — Walker serves a page that broadcasts the code via `BroadcastChannel('strava-auth')` so the profile page receives it and submits automatically, then the tab closes itself. Falls back to `postMessage(opener)` for older browsers. Always shows the code visibly for manual copy in case both methods fail.
+5. The profile page listens on the same BroadcastChannel and calls the connect handler on receipt.
 6. Walker POSTs `{client_id, client_secret, code}` to `POST /auth/strava/connect` (requires `walker_id` cookie)
 7. Server exchanges the authorization code for tokens via Strava API (includes athlete ID and name in response), stores in `strava_connections`
 
@@ -671,9 +671,9 @@ Strava is **not a login provider** — users authenticate via GitHub/Google as n
 - Walk, Hike, Run, and VirtualRun are imported (both indoor and outdoor). TrailRun, rides, swims, and everything else are ignored. Uses `sport_type` (preferred, more granular) falling back to `type` for older records.
 - One segment per Strava activity: `average_speed × 3.6 = speed_kmh`, `moving_time = duration_s`, `distance = distance_m`
 - Each imported activity gets one row in `imported_activities` (with the full raw API response stored as JSONB) before the segment is inserted.
-- Calories computed at query time via existing MET formula — no special handling
+- Calories computed at query time via the existing `active_calories()` SQL function — no special handling
 - Deduplication: `UNIQUE INDEX idx_segments_activity_dedup ON segments(user_id, activity_id) WHERE activity_id IS NOT NULL` — safe to re-sync
-- Strava-sourced segments show an orange **S** icon at the start of the segment row, linked to the Strava activity URL, with the activity name on hover
+- Strava-sourced segments show an orange **Strava** link at the start of the segment row, pointing to the Strava activity URL, with the activity name on hover
 - Debug link on each imported segment → `GET /api/activity/raw/{activity_id}` (own-only, returns raw JSONB)
 
 ### On-Demand Sync
@@ -688,13 +688,13 @@ On every server start, Walker spawns `strava::startup_sync()` as a background ta
 2. If no Strava segments exist, fall back to `last_synced_at` from `strava_connections`
 3. If neither is available, default to now (no backfill)
 
-The 1-hour buffer covers timing edge cases (activities near the boundary, clock skew). Import is idempotent — already-known activities hit `ON CONFLICT DO NOTHING` and are silently skipped. This means any activities missed while the server was offline are automatically caught up on the next restart without a fixed lookback window.
+The 1-hour buffer covers timing edge cases (activities near the boundary, clock skew). Import is idempotent — the `imported_activities` row is upserted (metadata refreshed on re-sync), but the segment row uses `ON CONFLICT DO NOTHING` so no duplicate segments are created. This means any activities missed while the server was offline are automatically caught up on the next restart without a fixed lookback window.
 
-`last_synced_at` on `strava_connections` is updated after every successful import (manual sync or webhook delivery). On first connection it is set to `NOW()`.
+`last_synced_at` on `strava_connections` is updated after every successful import (manual sync or startup catchup). On first connection it is set to `NOW()`.
 
 ### Database Tables
 
-- `strava_connections (user_id PK, athlete_id, client_id, client_secret, access_token, refresh_token, expires_at)` — per-user app credentials + tokens (plaintext; see TODO #6)
+- `strava_connections (user_id PK, athlete_id, client_id, client_secret, access_token, refresh_token, expires_at, connected_at, last_synced_at)` — per-user app credentials + tokens; `client_secret`, `access_token`, and `refresh_token` are encrypted at rest when `WALKER_ENCRYPTION_KEY` is set, plaintext otherwise
 - `imported_activities (id BIGSERIAL PK, source, external_id, name, source_url, raw_data JSONB, imported_at, UNIQUE(source, external_id))` — one row per imported external activity; stores the full raw API response
 - `segments.source TEXT DEFAULT 'ble'` — `'ble'` or `'strava'`
 - `segments.activity_id BIGINT FK → imported_activities(id)` — set for imported segments; NULL for BLE

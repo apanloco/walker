@@ -45,9 +45,9 @@ struct StravaAthlete {
 
 // -- GET /strava-auth --
 // Redirect target for Strava OAuth. After the user authorizes, Strava redirects
-// here with ?code=XXX. This page posts the code to the opener (Walker profile
-// page) via postMessage so the form can auto-submit. Falls back to displaying
-// the code manually if there is no opener (e.g. direct navigation).
+// here with ?code=XXX. This page broadcasts the code via BroadcastChannel('strava-auth')
+// so the Walker profile page can receive it and submit immediately. Falls back to
+// postMessage(opener) for older browsers, and always shows the code for manual copy.
 
 async fn strava_auth_helper(
     Query(params): Query<std::collections::HashMap<String, String>>,
