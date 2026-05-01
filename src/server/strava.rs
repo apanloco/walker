@@ -180,15 +180,27 @@ async fn connect(
             .into_response();
     };
 
-    let stored_secret = match &state.encryption_key {
-        Some(key) => match super::crypto::encrypt(key, &body.client_secret) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to encrypt client_secret");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
-            }
-        },
-        None => body.client_secret.clone(),
+    let key = state.encryption_key.as_ref();
+    let stored_secret = match encrypt_field(key, &body.client_secret) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to encrypt Strava credentials");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
+        }
+    };
+    let stored_access = match encrypt_field(key, &token_data.access_token) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to encrypt Strava credentials");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
+        }
+    };
+    let stored_refresh = match encrypt_field(key, &token_data.refresh_token) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to encrypt Strava credentials");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
+        }
     };
 
     if let Err(e) = db::upsert_strava_connection(
@@ -197,8 +209,8 @@ async fn connect(
         athlete.id,
         &body.client_id,
         &stored_secret,
-        &token_data.access_token,
-        &token_data.refresh_token,
+        &stored_access,
+        &stored_refresh,
         token_data.expires_at,
     )
     .await
@@ -279,14 +291,14 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
         .await?
         .ok_or_else(|| anyhow::anyhow!("No Strava connection for user"))?;
 
+    let key = state.encryption_key.as_ref();
+
     if !conn.needs_refresh {
-        return Ok(conn.access_token);
+        return decrypt_field(key, &conn.access_token);
     }
 
-    let client_secret = match &state.encryption_key {
-        Some(key) => super::crypto::decrypt(key, &conn.client_secret)?,
-        None => conn.client_secret.clone(),
-    };
+    let client_secret = decrypt_field(key, &conn.client_secret)?;
+    let refresh_token = decrypt_field(key, &conn.refresh_token)?;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -295,7 +307,7 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
             ("client_id", conn.client_id.as_str()),
             ("client_secret", client_secret.as_str()),
             ("grant_type", "refresh_token"),
-            ("refresh_token", conn.refresh_token.as_str()),
+            ("refresh_token", refresh_token.as_str()),
         ])
         .send()
         .await?
@@ -305,8 +317,8 @@ async fn fresh_token(state: &StravaState, user_id: uuid::Uuid) -> anyhow::Result
     db::update_strava_tokens(
         &state.live.db_pool,
         user_id,
-        &resp.access_token,
-        &resp.refresh_token,
+        &encrypt_field(key, &resp.access_token)?,
+        &encrypt_field(key, &resp.refresh_token)?,
         resp.expires_at,
     )
     .await?;
@@ -474,6 +486,20 @@ pub async fn startup_sync(state: &StravaState) {
 }
 
 // -- Helpers --
+
+fn encrypt_field(key: Option<&[u8; 32]>, value: &str) -> anyhow::Result<String> {
+    match key {
+        Some(k) => super::crypto::encrypt(k, value),
+        None => Ok(value.to_string()),
+    }
+}
+
+fn decrypt_field(key: Option<&[u8; 32]>, value: &str) -> anyhow::Result<String> {
+    match key {
+        Some(k) => super::crypto::decrypt(k, value),
+        None => Ok(value.to_string()),
+    }
+}
 
 fn unix_now() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};

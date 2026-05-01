@@ -60,3 +60,82 @@ fn hex_decode(s: &str) -> anyhow::Result<Vec<u8>> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_key() -> [u8; 32] {
+        [0x42u8; 32]
+    }
+
+    #[test]
+    fn roundtrip() {
+        let key = test_key();
+        let encrypted = encrypt(&key, "my_strava_client_secret").unwrap();
+        assert!(encrypted.starts_with("enc:"));
+        assert_eq!(decrypt(&key, &encrypted).unwrap(), "my_strava_client_secret");
+    }
+
+    #[test]
+    fn each_encrypt_produces_different_ciphertext() {
+        let key = test_key();
+        let enc1 = encrypt(&key, "same_value").unwrap();
+        let enc2 = encrypt(&key, "same_value").unwrap();
+        assert_ne!(enc1, enc2, "each call must use a fresh nonce");
+    }
+
+    #[test]
+    fn plaintext_passthrough() {
+        let key = test_key();
+        // Values without the "enc:" prefix are returned as-is (migration compat).
+        assert_eq!(decrypt(&key, "old_plaintext_token").unwrap(), "old_plaintext_token");
+    }
+
+    #[test]
+    fn wrong_key_fails() {
+        let key1 = [0x01u8; 32];
+        let key2 = [0x02u8; 32];
+        let encrypted = encrypt(&key1, "secret").unwrap();
+        assert!(decrypt(&key2, &encrypted).is_err());
+    }
+
+    #[test]
+    fn corrupted_ciphertext_fails() {
+        let key = test_key();
+        let mut encrypted = encrypt(&key, "secret").unwrap();
+        // Flip a nibble in the hex after the "enc:" prefix + nonce (first 24 chars).
+        let pos = "enc:".len() + 24 + 2; // byte after nonce
+        unsafe {
+            let bytes = encrypted.as_bytes_mut();
+            bytes[pos] ^= 0x01;
+        }
+        assert!(decrypt(&key, &encrypted).is_err());
+    }
+
+    #[test]
+    fn empty_string_roundtrip() {
+        let key = test_key();
+        let encrypted = encrypt(&key, "").unwrap();
+        assert_eq!(decrypt(&key, &encrypted).unwrap(), "");
+    }
+
+    #[test]
+    fn parse_key_valid() {
+        let hex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let key = parse_key(hex).unwrap();
+        assert_eq!(key[0], 0x01);
+        assert_eq!(key[31], 0x20);
+    }
+
+    #[test]
+    fn parse_key_wrong_length() {
+        assert!(parse_key("0102").is_err());
+        assert!(parse_key(&"aa".repeat(33)).is_err()); // 66 chars = 33 bytes
+    }
+
+    #[test]
+    fn parse_key_invalid_hex() {
+        assert!(parse_key(&"zz".repeat(32)).is_err());
+    }
+}
