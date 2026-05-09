@@ -258,6 +258,7 @@ All timing constants in one place. Referenced throughout this doc.
 | Dashboard leaderboard poll | 5s | app.js | Client-side polling interval for leaderboard |
 | Token expiry | 180 days | db.rs | Bearer tokens expire after this |
 | Update rate limit | 10 req/s, burst 20 | update.rs | Per-token rate limit on authenticated endpoints |
+| Auto-stop default | 10 min | main.rs | `--auto-stop` without value: minutes of idle before sending stop |
 
 ### Server → Viewer Protocol
 
@@ -487,6 +488,7 @@ Profile impls live in `src/device/urevo.rs` (or a new file per brand). Each prof
 - `capabilities(device_name)` — what controls are available for this specific BLE-advertised model
 - `set_speed(device, kmh)` — writes the proprietary speed command to `0xFFF2` (default impl: errors)
 - `start(device)` — sends the query + start handshake so `walker walk --start` can begin a session without the user reaching for the remote (default impl: errors)
+- `stop(device)` — sends the proprietary stop frame so `walker walk --auto-stop` can halt the belt after extended inactivity (default impl: errors)
 - `parse_notification(uuid, data)` — parses notification bytes into `TreadmillEvent`s (`Data`, `StatusOnly`, `CommandAck`, or `Unknown`)
 
 Capabilities are resolved at connect time from the BLE `local_name` so one profile can describe multiple sibling models.
@@ -594,6 +596,8 @@ walker walk               # connect to treadmill, report to production server
 walker walk --dev         # report to local dev server
 walker walk --offline     # run without reporting (no login required)
 walker walk --start       # auto-start the belt after connect (safety: only use when ready to walk; fires once per process — not on reconnect)
+walker walk --auto-stop   # auto-stop the belt after 10 min of idle (default value when flag is bare)
+walker walk --auto-stop 5 # auto-stop after 5 min of idle
 ```
 
 On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM041)` followed by control hints for the model.
@@ -608,6 +612,8 @@ On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM
 Each press sends the proprietary speed command to `0xFFF2`. Speed changes are not reported to the server directly — the observed speed from the proprietary stream is what gets logged.
 
 When the profile has no speed control, raw mode is not entered and the command behaves as before.
+
+**Auto-stop (`--auto-stop [MINUTES]`).** When the activity tracker stays in IDLE continuously for the configured duration (default 10 min), the CLI sends a stop command to the treadmill. Walking transitions clear the idle timer; Pausing/Paused/Standby/Off reset the activity tracker (phase becomes Init), which also clears the timer. The flag fires once per idle window — after the device transitions through Pausing, the timer is empty until the user walks again. If the device profile doesn't implement `stop()`, the failure is logged as a warning and the timer is reset (no retry storm). Omit the flag to disable.
 
 Auto-reconnects on disconnect. Keeps scanning if no treadmill found. macOS: checks Bluetooth permission before init (prevents CoreBluetooth segfault). See [Timeouts & Intervals](#timeouts--intervals) for BLE timing.
 

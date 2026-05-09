@@ -192,6 +192,12 @@ pub trait TreadmillProfile: Send + Sync {
         anyhow::bail!("start is not supported by this profile")
     }
 
+    /// Stop a session — roughly "press Stop on the remote". Used by --auto-stop
+    /// to halt the belt after extended inactivity. Default errors.
+    async fn stop(&self, _device: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
+        anyhow::bail!("stop is not supported by this profile")
+    }
+
     /// Parse a BLE notification into a TreadmillEvent.
     /// Returns None if this profile does not handle the given characteristic.
     fn parse_notification(&self, uuid: &Uuid, data: &[u8]) -> Option<TreadmillEvent>;
