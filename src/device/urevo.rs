@@ -19,6 +19,8 @@ const UREVO_CHECKSUM_XOR: u8 = 0x5A;
 const UREVO_SUBCMD_START: u8 = 0x01;
 /// Sub-command byte for "set target speed".
 const UREVO_SUBCMD_SET_SPEED: u8 = 0x02;
+/// Sub-command byte for "stop session".
+const UREVO_SUBCMD_STOP: u8 = 0x0A;
 
 /// Build the proprietary "start session" frame:
 /// `02 53 01 00 00 00 00 00 00 00 00 0e 03`
@@ -41,6 +43,15 @@ fn build_start_cmd() -> [u8; 13] {
         0x0e,
         0x03,
     ]
+}
+
+/// Build the proprietary "stop session" frame: `02 53 0A 07 03`.
+/// Documented under "Supported Devices" in CLAUDE.md.
+fn build_stop_cmd() -> [u8; 5] {
+    // sum(53 + 0A) = 0x5D → XOR 0x5A = 0x07.
+    let sum: u8 = 0x53u8.wrapping_add(UREVO_SUBCMD_STOP);
+    let checksum = sum ^ UREVO_CHECKSUM_XOR;
+    [0x02, 0x53, UREVO_SUBCMD_STOP, checksum, 0x03]
 }
 
 /// Build a proprietary speed-set frame for FFF2:
@@ -224,6 +235,18 @@ impl TreadmillProfile for UrevoProfile {
         Ok(())
     }
 
+    async fn stop(&self, device: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
+        let services = device.services();
+        let ch = services
+            .iter()
+            .flat_map(|s| &s.characteristics)
+            .find(|c| c.uuid == UREVO_WRITE_UUID)
+            .ok_or_else(|| anyhow::anyhow!("UREVO write characteristic not found"))?;
+        let cmd = build_stop_cmd();
+        device.write(ch, &cmd, WriteType::WithoutResponse).await?;
+        Ok(())
+    }
+
     fn parse_notification(&self, uuid: &Uuid, data: &[u8]) -> Option<TreadmillEvent> {
         if *uuid != UREVO_NOTIFY_UUID {
             return None;
@@ -285,5 +308,11 @@ mod tests {
             build_set_speed_cmd(1.3),
             [0x02, 0x53, 0x02, 0x0d, 0x00, 0x38, 0x03]
         );
+    }
+
+    #[test]
+    fn stop_cmd_matches_documented_frame() {
+        // CLAUDE.md "Supported Devices": `02 53 0A 07 03`.
+        assert_eq!(build_stop_cmd(), [0x02, 0x53, 0x0A, 0x07, 0x03]);
     }
 }

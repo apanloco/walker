@@ -99,6 +99,11 @@ enum Command {
         /// to walk — the belt will start moving at the treadmill's default speed.
         #[arg(long)]
         start: bool,
+        /// Auto-stop the treadmill after this many minutes of inactivity (idle).
+        /// Pass `--auto-stop` alone for the default of 10 minutes, or
+        /// `--auto-stop 5` to set a custom value. Omit the flag to disable.
+        #[arg(long, num_args = 0..=1, default_missing_value = "10")]
+        auto_stop: Option<u32>,
     },
     /// Simulate a treadmill (no BLE needed)
     #[cfg(feature = "client")]
@@ -196,7 +201,8 @@ async fn main() -> anyhow::Result<()> {
             dev,
             offline,
             start,
-        } => walk(timeout, dev, offline, start).await?,
+            auto_stop,
+        } => walk(timeout, dev, offline, start, auto_stop).await?,
         #[cfg(feature = "client")]
         Command::Simulate { speed, count, dev } => simulate(speed, count, dev).await?,
         #[cfg(feature = "client")]
@@ -437,16 +443,25 @@ enum WalkExit {
 }
 
 #[cfg(feature = "client")]
-async fn walk(timeout: u64, dev: bool, offline: bool, mut start: bool) -> anyhow::Result<()> {
+async fn walk(
+    timeout: u64,
+    dev: bool,
+    offline: bool,
+    mut start: bool,
+    auto_stop_minutes: Option<u32>,
+) -> anyhow::Result<()> {
     use btleplug::api::Peripheral;
     use colored::Colorize;
     use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
     use futures::stream::StreamExt;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tracing::{error, warn};
 
-    use activity::ActivityTracker;
+    use activity::{ActivityPhase, ActivityTracker};
     use device::{StepTracker, TreadmillEvent, TreadmillStatus, default_registry};
+
+    let auto_stop_duration =
+        auto_stop_minutes.map(|m| Duration::from_secs(m as u64 * 60));
 
     let registry = default_registry();
     let adapter = ble::get_adapter().await?;
@@ -606,6 +621,12 @@ async fn walk(timeout: u64, dev: bool, offline: bool, mut start: bool) -> anyhow
         let mut last_status: Option<TreadmillStatus> = None;
         const SET_SPEED_GRACE: Duration = Duration::from_millis(750);
 
+        // When did the user enter the Idle phase? Used by --auto-stop to fire
+        // a stop write after `auto_stop_duration` of continuous inactivity.
+        // Cleared whenever the phase leaves Idle (Walking, Init, or treadmill
+        // status that resets the activity tracker — Pausing/Paused/Standby/Off).
+        let mut idle_since: Option<Instant> = None;
+
         let mut timeout_fut = Box::pin(tokio::time::sleep(Duration::from_secs(10)));
 
         let exit = loop {
@@ -673,6 +694,30 @@ async fn walk(timeout: u64, dev: bool, offline: bool, mut start: bool) -> anyhow
                             let treadmill_running = data.status == TreadmillStatus::Running;
                             let activity =
                                 activity_tracker.update(step_change, treadmill_running, data.speed_kmh);
+
+                            // Auto-stop: fire after `auto_stop_duration` in Idle.
+                            // The activity tracker resets to Init on Pausing/Paused/
+                            // Standby/Off, so phase != Idle covers those automatically.
+                            if let Some(threshold) = auto_stop_duration {
+                                if activity.phase == ActivityPhase::Idle {
+                                    let started = *idle_since.get_or_insert_with(Instant::now);
+                                    if started.elapsed() >= threshold {
+                                        info!(
+                                            minutes = auto_stop_minutes.unwrap_or(0),
+                                            "Auto-stopping treadmill after inactivity"
+                                        );
+                                        if let Err(e) = profile.stop(&device).await {
+                                            warn!(error = %e, "Failed to send auto-stop command");
+                                        }
+                                        // Don't refire on the next packet — the
+                                        // device will transition through Pausing,
+                                        // which resets the activity tracker.
+                                        idle_since = None;
+                                    }
+                                } else {
+                                    idle_since = None;
+                                }
+                            }
                             let key = (data.status, (data.speed_kmh * 10.0) as i32, data.duration_secs, data.steps, activity.phase);
                             if last_display.as_ref() != Some(&key) {
                                 if lines_since_header.is_multiple_of(20) {
@@ -803,7 +848,13 @@ async fn set_weight(weight_kg: f32, dev: bool) -> anyhow::Result<()> {
     if res.status().is_success() {
         println!("  Weight set to {weight_kg} kg");
     } else {
-        anyhow::bail!("Server rejected weight update (status {})", res.status());
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        if body.is_empty() {
+            anyhow::bail!("Server rejected weight update (status {status})");
+        } else {
+            anyhow::bail!("Server rejected weight update (status {status}): {body}");
+        }
     }
 
     Ok(())
