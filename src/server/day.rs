@@ -1,4 +1,10 @@
-use axum::{Router, extract::{Path, State}, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
 use sqlx::Row;
 use std::collections::BTreeMap;
 
@@ -10,15 +16,16 @@ pub fn routes() -> Router<SharedLive> {
 
 /// All users with walking segments for a given UTC date. Public.
 /// Idle segments are omitted — they contribute 0 kcal.
-async fn get_day(
-    State(ctx): State<SharedLive>,
-    Path(date_str): Path<String>,
-) -> impl IntoResponse {
+async fn get_day(State(ctx): State<SharedLive>, Path(date_str): Path<String>) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
     // Validate date format (YYYY-MM-DD).
     if date_str.len() != 10 || !date_str.chars().all(|c| c.is_ascii_digit() || c == '-') {
-        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": "invalid date"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error": "invalid date"})),
+        )
+            .into_response();
     }
 
     let rows = match sqlx::query(
@@ -43,7 +50,8 @@ async fn get_day(
 
     // Group rows by user. BTreeMap iteration order is sorted by user id (matches the
     // SQL ORDER BY u.id), so the legend on the chart is deterministic across reloads.
-    let mut users: BTreeMap<uuid::Uuid, (String, Option<String>, Vec<serde_json::Value>)> = BTreeMap::new();
+    let mut users: BTreeMap<uuid::Uuid, (String, Option<String>, Vec<serde_json::Value>)> =
+        BTreeMap::new();
     for r in &rows {
         let id: uuid::Uuid = r.get("id");
         let name: String = r.get("name");

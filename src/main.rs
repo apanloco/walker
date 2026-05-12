@@ -460,8 +460,7 @@ async fn walk(
     use activity::{ActivityPhase, ActivityTracker};
     use device::{StepTracker, TreadmillEvent, TreadmillStatus, default_registry};
 
-    let auto_stop_duration =
-        auto_stop_minutes.map(|m| Duration::from_secs(m as u64 * 60));
+    let auto_stop_duration = auto_stop_minutes.map(|m| Duration::from_secs(m as u64 * 60));
 
     let registry = default_registry();
     let adapter = ble::get_adapter().await?;
