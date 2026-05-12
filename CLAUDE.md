@@ -239,7 +239,7 @@ UTC everywhere. All timestamps are stored as `TIMESTAMPTZ` (UTC internally). All
 
 This means for users east of UTC, there's a window after local midnight where "today" on the dashboard still shows the previous UTC day. This is an accepted tradeoff for simplicity — no per-user timezone config, no timezone threading through queries, and the client and server always agree on what "today" means.
 
-**Display exception:** the day chart X axis labels are shown in the viewer's local timezone (browser `getTimezoneOffset()`). The data domain is still the UTC day; only the hour numbers printed on the axis are shifted.
+**Display exception:** the day chart X axis labels are shown in the viewer's local timezone (browser `getTimezoneOffset()`). The data domain is still the UTC day; only the hour numbers printed on the axis are shifted. A timezone abbreviation (e.g. "CET") derived from `Intl.DateTimeFormat` is shown at the right end of the X axis and in the hover tooltip so the displayed timezone is always explicit.
 
 ### Timeouts & Intervals
 
