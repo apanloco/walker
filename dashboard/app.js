@@ -388,6 +388,7 @@ function niceMax(v) {
 }
 
 const TZ_OFFSET_SECS = -new Date().getTimezoneOffset() * 60;
+const TZ_NAME = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName').value;
 
 function fmtTimeOfDay(secs) {
   const localSecs = ((secs + TZ_OFFSET_SECS) % 86400 + 86400) % 86400;
@@ -499,6 +500,7 @@ function renderDay() {
     svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
     svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + fmtTimeOfDay(t) + '</text>';
   }
+  svg += '<text x="' + (W - PAD.r) + '" y="' + (H - PAD.b + 14) + '" text-anchor="end" class="fill-gray-600" style="font-size:9px">' + TZ_NAME + '</text>';
 
   // "Now" line on today.
   if (isToday) {
@@ -550,7 +552,7 @@ function renderDay() {
       .map(s => ({ name: s.name, color: s.color, kcal: kcalAtTime(s.points, tClamped) }))
       .filter(r => r.kcal > 0)
       .sort((a, b) => b.kcal - a.kcal);
-    let html = '<div class="text-gray-400 mb-1">' + fmtTimeOfDay(tClamped) + '</div>';
+    let html = '<div class="text-gray-400 mb-1">' + fmtTimeOfDay(tClamped) + ' ' + TZ_NAME + '</div>';
     if (ranked.length === 0) {
       html += '<div class="text-gray-600 italic">No one walking yet</div>';
     } else {
