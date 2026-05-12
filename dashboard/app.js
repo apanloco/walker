@@ -387,9 +387,12 @@ function niceMax(v) {
   return nf * exp;
 }
 
+const TZ_OFFSET_SECS = -new Date().getTimezoneOffset() * 60;
+
 function fmtTimeOfDay(secs) {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
+  const localSecs = ((secs + TZ_OFFSET_SECS) % 86400 + 86400) % 86400;
+  const h = Math.floor(localSecs / 3600);
+  const m = Math.floor((localSecs % 3600) / 60);
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
 
@@ -494,7 +497,7 @@ function renderDay() {
   for (let t = xMin; t <= xMax + 1; t += xStep) {
     const x = xPx(t);
     svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
-    svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + String(Math.round(t / 3600)).padStart(2, '0') + ':00</text>';
+    svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + fmtTimeOfDay(t) + '</text>';
   }
 
   // "Now" line on today.
@@ -547,7 +550,7 @@ function renderDay() {
       .map(s => ({ name: s.name, color: s.color, kcal: kcalAtTime(s.points, tClamped) }))
       .filter(r => r.kcal > 0)
       .sort((a, b) => b.kcal - a.kcal);
-    let html = '<div class="text-gray-400 mb-1">' + fmtTimeOfDay(tClamped) + ' UTC</div>';
+    let html = '<div class="text-gray-400 mb-1">' + fmtTimeOfDay(tClamped) + '</div>';
     if (ranked.length === 0) {
       html += '<div class="text-gray-600 italic">No one walking yet</div>';
     } else {
