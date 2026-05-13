@@ -391,6 +391,7 @@ const TZ_OFFSET_SECS = -new Date().getTimezoneOffset() * 60;
 const TZ_NAME = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName').value;
 
 function fmtTimeOfDay(secs) {
+  if (secs === 86400) return '24:00';
   const localSecs = ((secs + TZ_OFFSET_SECS) % 86400 + 86400) % 86400;
   const h = Math.floor(localSecs / 3600);
   const m = Math.floor((localSecs % 3600) / 60);
