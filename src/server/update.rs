@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{post, put},
 };
 use serde::Deserialize;
@@ -178,6 +178,9 @@ async fn handle_update(
 
 // -- PUT /api/weight --
 
+const WEIGHT_MIN_KG: f32 = 20.0;
+const WEIGHT_MAX_KG: f32 = 300.0;
+
 #[derive(Deserialize)]
 struct SetWeightPayload {
     weight_kg: f32,
@@ -187,18 +190,29 @@ async fn handle_set_weight(
     State(ctx): State<SharedLive>,
     headers: axum::http::HeaderMap,
     Json(payload): Json<SetWeightPayload>,
-) -> impl IntoResponse {
+) -> Response {
     let Some(token) = extract_bearer_token(&headers) else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
     let pool = &ctx.db_pool;
     let Ok(Some(user)) = db::find_user_from_token(pool, token).await else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
+
+    if !payload.weight_kg.is_finite()
+        || payload.weight_kg < WEIGHT_MIN_KG
+        || payload.weight_kg > WEIGHT_MAX_KG
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("weight must be between {WEIGHT_MIN_KG} and {WEIGHT_MAX_KG} kg"),
+        )
+            .into_response();
+    }
 
     if let Err(e) = db::set_user_weight(pool, user.id, payload.weight_kg).await {
         error!(error = %e, "Failed to set weight");
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
     // Update weight on open segment if any.
@@ -209,7 +223,7 @@ async fn handle_set_weight(
     // Push updated segment to per-user subscribers.
     live::push_user_segment(&ctx, user.id).await;
 
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
