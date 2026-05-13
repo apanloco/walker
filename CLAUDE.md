@@ -233,6 +233,8 @@ Incline change threshold for state-change detection is 0.05 percentage points (m
 
 Default 70.0 kg. Stored on each segment at creation time so historical calories remain accurate if weight changes. The History page shows weight per segment, making users aware it affects their numbers.
 
+**Validated range: 20–300 kg.** `PUT /api/weight` rejects values outside this range (or non-finite values) with `400 Bad Request` and a plain-text body explaining the limit. The cap covers every realistic human (heaviest verified person ever was ~635 kg, but 300 kg is well past any plausible treadmill user) while rejecting obvious typos (e.g. `set-weight 889`). The CLI surfaces the server's body text so the user sees *why* their input was rejected.
+
 ### Timezone
 
 UTC everywhere. All timestamps are stored as `TIMESTAMPTZ` (UTC internally). All date boundaries — "today", "this week", heatmap cells — use UTC. The dashboard JavaScript uses `getUTC*()` methods to match the server's `CURRENT_DATE`.
@@ -638,7 +640,7 @@ walker set-weight 78                 # set weight to 78 kg (production)
 walker set-weight 78 --dev           # set weight on local dev server
 ```
 
-Requires login. Updates `users.weight_kg` on the server. New segments use the updated weight.
+Requires login. Updates `users.weight_kg` on the server. New segments use the updated weight. Server validates the value is in the 20–300 kg range (see [Weight](#weight)).
 
 ### Global options
 ```
