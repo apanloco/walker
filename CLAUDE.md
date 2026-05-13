@@ -14,7 +14,7 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 **Never push without asking.** Always confirm with the user before running `git push` or any variant. No exceptions.
 
-**Always run clippy before committing.** `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must pass before any commit. This is enforced by a `.claude/settings.json` PreToolUse hook.
+**Always run clippy before committing.** `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must pass before any commit.
 
 ## TODO
 
