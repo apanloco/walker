@@ -294,10 +294,48 @@ function fetchLeaderboard() {
 
 let currentDayDate = null; // null = today (auto-rolls)
 let lastDayData = null;
+let chartRange = 'day'; // 'day' | 'week' | 'alltime'
+let currentWeekStart = null; // null = this ISO week (Mon), else 'YYYY-MM-DD'
+let lastWeekData = null;
+let lastAllTimeData = null;
+let chartRangeSwitchedMs = 0; // timestamp of last range switch, for animation gating
 
 function utcTodayStr() {
   const d = new Date();
   return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+function isoWeekMonday(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const day = d.getUTCDay(); // 0=Sun
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+function weekDates(mondayStr) {
+  const dates = [];
+  const d = new Date(mondayStr + 'T00:00:00Z');
+  for (let i = 0; i < 7; i++) {
+    dates.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function weekViewingCurrent() {
+  const thisWeek = isoWeekMonday(utcTodayStr());
+  return (currentWeekStart || thisWeek) === thisWeek;
+}
+
+function weekShift(n) {
+  const thisWeek = isoWeekMonday(utcTodayStr());
+  const mon = currentWeekStart || thisWeek;
+  const d = new Date(mon + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n * 7);
+  const next = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+  if (next > thisWeek) return;
+  currentWeekStart = next === thisWeek ? null : next;
+  fetchWeek();
 }
 
 function dayViewingToday() {
@@ -333,6 +371,40 @@ function fetchDay() {
       renderDay();
     })
     .catch(e => console.error('Failed to fetch day:', e));
+}
+
+function fetchWeek() {
+  const mon = currentWeekStart || isoWeekMonday(utcTodayStr());
+  const dates = weekDates(mon);
+  const isCurrent = weekViewingCurrent();
+
+  document.getElementById('nav-next').disabled = isCurrent;
+  document.getElementById('nav-next').classList.toggle('opacity-30', isCurrent);
+  document.getElementById('nav-next').classList.toggle('cursor-not-allowed', isCurrent);
+  document.getElementById('nav-reset').disabled = isCurrent;
+  document.getElementById('nav-reset').classList.toggle('opacity-30', isCurrent);
+  document.getElementById('nav-reset').classList.toggle('cursor-not-allowed', isCurrent);
+
+  const monDate = new Date(mon + 'T00:00:00Z');
+  const sunDate = new Date(dates[6] + 'T00:00:00Z');
+  const fmtBase = {timeZone: 'UTC', month: 'short', day: 'numeric'};
+  document.getElementById('nav-title').textContent = isCurrent
+    ? 'This Week'
+    : monDate.toLocaleDateString('en', fmtBase) + ' – ' + sunDate.toLocaleDateString('en', {...fmtBase, year: 'numeric'});
+
+  Promise.all(dates.map(date =>
+    fetch('/api/day/' + date).then(r => r.ok ? r.json() : null).catch(() => null)
+  )).then(results => {
+    lastWeekData = dates.map((date, i) => ({date, data: results[i]}));
+    renderWeek();
+  });
+}
+
+function fetchAllTime() {
+  fetch('/api/alltime')
+    .then(r => r.ok ? r.json() : [])
+    .then(data => { lastAllTimeData = data; renderAllTime(); })
+    .catch(e => console.error('Failed to fetch alltime:', e));
 }
 
 // Build cumulative-kcal points {t, kcal} where t is seconds since UTC midnight.
@@ -404,22 +476,19 @@ function renderDay() {
   const isToday = dayViewingToday();
   const viewDate = data.date;
 
-  // Title.
-  const titleEl = document.getElementById('day-title');
+  // Update nav title and next/reset disabled state.
   if (isToday) {
-    titleEl.textContent = 'Today';
+    document.getElementById('nav-title').textContent = 'Today';
   } else {
     const d = new Date(viewDate + 'T00:00:00Z');
-    titleEl.textContent = d.toLocaleDateString('en', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' });
+    document.getElementById('nav-title').textContent = d.toLocaleDateString('en', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' });
   }
-
-  // Buttons: disable next/today when on today.
-  document.getElementById('day-next').disabled = isToday;
-  document.getElementById('day-next').classList.toggle('opacity-30', isToday);
-  document.getElementById('day-next').classList.toggle('cursor-not-allowed', isToday);
-  document.getElementById('day-today').disabled = isToday;
-  document.getElementById('day-today').classList.toggle('opacity-30', isToday);
-  document.getElementById('day-today').classList.toggle('cursor-not-allowed', isToday);
+  document.getElementById('nav-next').disabled = isToday;
+  document.getElementById('nav-next').classList.toggle('opacity-30', isToday);
+  document.getElementById('nav-next').classList.toggle('cursor-not-allowed', isToday);
+  document.getElementById('nav-reset').disabled = isToday;
+  document.getElementById('nav-reset').classList.toggle('opacity-30', isToday);
+  document.getElementById('nav-reset').classList.toggle('cursor-not-allowed', isToday);
 
   // Build per-user series.
   const series = data.users.map(u => ({
@@ -523,6 +592,9 @@ function renderDay() {
   // Hover crosshair (hidden by default).
   svg += '<line id="day-crosshair" x1="0" x2="0" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-500))" stroke-width="1" stroke-dasharray="3,3" opacity="0" pointer-events="none"/>';
 
+  // Axis unit label.
+  svg += '<text x="' + (W - PAD.r) + '" y="' + (H - 2) + '" text-anchor="end" class="fill-gray-600" style="font-size:9px">hours (UTC)</text>';
+
   // Hover-capture rect.
   svg += '<rect id="day-hover-rect" x="' + PAD.l + '" y="' + PAD.t + '" width="' + innerW + '" height="' + innerH + '" fill="transparent"/>';
 
@@ -538,6 +610,8 @@ function renderDay() {
       '<span class="text-gray-500">' + fmtNum(s.points[s.points.length - 1].kcal, 1) + ' kcal</span>' +
     '</div>'
   ).join('');
+
+  animateChartReveal(container);
 
   // Hover handling.
   const rect = container.querySelector('#day-hover-rect');
@@ -585,11 +659,397 @@ function renderDay() {
   });
 }
 
-// Wire navigation buttons (once).
-document.getElementById('day-prev').addEventListener('click', () => dayShiftDate(-1));
-document.getElementById('day-next').addEventListener('click', () => { if (!dayViewingToday()) dayShiftDate(1); });
-document.getElementById('day-today').addEventListener('click', () => { if (!dayViewingToday()) { currentDayDate = null; fetchDay(); } });
-window.addEventListener('resize', () => { if (lastDayData) renderDay(); });
+// -- Week and All Time chart views --
+
+function buildWeekSeries(weekEntries) {
+  const todayStr = utcTodayStr();
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const userMap = new Map();
+
+  weekEntries.forEach(({date, data}, i) => {
+    if (!data) return;
+    for (const u of data.users) {
+      if (!userMap.has(u.id)) userMap.set(u.id, {id: u.id, name: u.name, color: userColor(u.id), kcals: new Array(7).fill(0)});
+      userMap.get(u.id).kcals[i] = u.segments.reduce((sum, seg) => sum + seg.active_calories_kcal, 0);
+    }
+  });
+
+  const series = [...userMap.values()]
+    .filter(u => u.kcals.some(k => k > 0))
+    .map(u => ({id: u.id, name: u.name, color: u.color, points: u.kcals.map((kcal, i) => ({x: i, kcal}))}));
+
+  const xTicks = weekEntries.map(({date}, i) => ({x: i, label: DAY_NAMES[i], isToday: date === todayStr, date}));
+  const todayIndex = weekEntries.findIndex(e => e.date === todayStr);
+  const nowX = weekViewingCurrent() && todayIndex >= 0 ? todayIndex : null;
+
+  return {series, xTicks, nowX, axisLabel: 'days'};
+}
+
+function buildAllTimePeriods(allTimeData) {
+  if (!allTimeData || allTimeData.length === 0) return {series: [], xTicks: [], nowX: null, groupBy: 'week', axisLabel: 'weeks'};
+  const firstDate = allTimeData[0].date;
+  const lastDate = allTimeData[allTimeData.length - 1].date;
+  const spanDays = (new Date(lastDate + 'T00:00:00Z') - new Date(firstDate + 'T00:00:00Z')) / 86400000;
+  return spanDays > 84 ? buildAllTimeByMonth(allTimeData) : buildAllTimeByWeek(allTimeData);
+}
+
+function buildAllTimeByWeek(allTimeData) {
+  const weekMap = new Map();
+  const userInfo = new Map();
+  for (const {date, users} of allTimeData) {
+    const mon = isoWeekMonday(date);
+    if (!weekMap.has(mon)) weekMap.set(mon, new Map());
+    for (const u of users) {
+      userInfo.set(u.id, u.name);
+      weekMap.get(mon).set(u.id, (weekMap.get(mon).get(u.id) || 0) + u.kcal);
+    }
+  }
+
+  const currentMon = isoWeekMonday(utcTodayStr());
+  const allWeeks = [];
+  const d = new Date([...weekMap.keys()].sort()[0] + 'T00:00:00Z');
+  while (d.getTime() <= new Date(currentMon + 'T00:00:00Z').getTime()) {
+    allWeeks.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'));
+    d.setUTCDate(d.getUTCDate() + 7);
+  }
+
+  const xTicks = allWeeks.map((mon, i) => {
+    const md = new Date(mon + 'T00:00:00Z');
+    const prevMd = i > 0 ? new Date(allWeeks[i - 1] + 'T00:00:00Z') : null;
+    const label = (!prevMd || md.getUTCMonth() !== prevMd.getUTCMonth())
+      ? md.toLocaleDateString('en', {timeZone: 'UTC', month: 'short'}) : '';
+    return {x: i, label, mon};
+  });
+
+  const series = [...userInfo.keys()].map(id => ({
+    id, name: userInfo.get(id), color: userColor(id),
+    points: allWeeks.map((mon, i) => ({x: i, kcal: weekMap.get(mon)?.get(id) || 0})),
+  })).filter(s => s.points.some(p => p.kcal > 0));
+
+  const nowX = allWeeks.indexOf(currentMon);
+  return {series, xTicks, nowX: nowX >= 0 ? nowX : null, groupBy: 'week', axisLabel: 'weeks'};
+}
+
+function buildAllTimeByMonth(allTimeData) {
+  const monthMap = new Map();
+  const userInfo = new Map();
+  for (const {date, users} of allTimeData) {
+    const mk = date.slice(0, 7);
+    if (!monthMap.has(mk)) monthMap.set(mk, new Map());
+    for (const u of users) {
+      userInfo.set(u.id, u.name);
+      monthMap.get(mk).set(u.id, (monthMap.get(mk).get(u.id) || 0) + u.kcal);
+    }
+  }
+
+  const currentMonth = utcTodayStr().slice(0, 7);
+  const firstMonth = [...monthMap.keys()].sort()[0];
+  const allMonths = [];
+  let [y, m] = firstMonth.split('-').map(Number);
+  const [cy, cm] = currentMonth.split('-').map(Number);
+  while (y < cy || (y === cy && m <= cm)) {
+    allMonths.push(y + '-' + String(m).padStart(2, '0'));
+    if (++m > 12) { m = 1; y++; }
+  }
+
+  const xTicks = allMonths.map((mk, i) => {
+    const [yr, mo] = mk.split('-').map(Number);
+    const d = new Date(Date.UTC(yr, mo - 1, 1));
+    const isNewYear = mo === 1 || i === 0;
+    const label = d.toLocaleDateString('en', {timeZone: 'UTC', month: 'short', ...(isNewYear ? {year: '2-digit'} : {})});
+    return {x: i, label, monthKey: mk};
+  });
+
+  const series = [...userInfo.keys()].map(id => ({
+    id, name: userInfo.get(id), color: userColor(id),
+    points: allMonths.map((mk, i) => ({x: i, kcal: monthMap.get(mk)?.get(id) || 0})),
+  })).filter(s => s.points.some(p => p.kcal > 0));
+
+  const nowX = allMonths.indexOf(currentMonth);
+  return {series, xTicks, nowX: nowX >= 0 ? nowX : null, groupBy: 'month', axisLabel: 'months'};
+}
+
+// Animate chart lines drawing on from left to right (stroke-dashoffset trick).
+// Only fires within 2s of a range switch — not on routine live refreshes.
+function animateChartReveal(container) {
+  if (Date.now() - chartRangeSwitchedMs > 2000) return;
+
+  const polylines = container.querySelectorAll('svg polyline');
+  const circles = container.querySelectorAll('svg circle');
+
+  polylines.forEach(pl => {
+    const len = pl.getTotalLength();
+    if (!len) return;
+    pl.style.strokeDasharray = len;
+    pl.style.strokeDashoffset = len;
+    pl.style.transition = 'none';
+    void pl.getBoundingClientRect(); // force reflow so "invisible" state is committed
+    pl.style.transition = 'stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+    pl.style.strokeDashoffset = '0';
+  });
+
+  circles.forEach(c => {
+    c.style.opacity = '0';
+    c.style.transform = 'scale(0)';
+    c.style.transformOrigin = c.getAttribute('cx') + 'px ' + c.getAttribute('cy') + 'px';
+    c.style.transition = 'none';
+    void c.getBoundingClientRect();
+    c.style.transition = 'opacity 0.2s ease-out 0.45s, transform 0.2s ease-out 0.45s';
+    c.style.opacity = '1';
+    c.style.transform = 'scale(1)';
+  });
+}
+
+// Shared renderer for week + alltime (discrete X axis).
+function renderDiscreteChart(container, legendEl, series, xTicks, tooltipFmt, nowX, axisLabel) {
+  if (series.length === 0) {
+    container.innerHTML = '<div class="h-[280px] flex items-center justify-center text-gray-600 italic text-sm">No activity</div>';
+    legendEl.innerHTML = '<div class="text-xs text-gray-600 italic">No active users</div>';
+    return;
+  }
+
+  const W = container.clientWidth || 1200;
+  const H = 280;
+  const PAD = {l: 44, r: 14, t: 12, b: 28};
+  const innerW = W - PAD.l - PAD.r;
+  const innerH = H - PAD.t - PAD.b;
+  const numTicks = xTicks.length;
+
+  // Pad x domain by 0.5 on each side so tick centers sit in the middle of their zones.
+  const xRange = numTicks;
+  const xPx = x => PAD.l + ((x + 0.5) / xRange) * innerW;
+
+  const maxKcal = Math.max(10, ...series.flatMap(s => s.points.map(p => p.kcal)));
+  const yMax = niceMax(maxKcal * 1.1);
+  const yPx = k => PAD.t + innerH - (k / yMax) * innerH;
+
+  let svg = '<svg width="' + W + '" height="' + H + '" class="block">';
+
+  // Y gridlines + labels.
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const k = (yMax / yTicks) * i;
+    const y = yPx(k);
+    svg += '<line x1="' + PAD.l + '" x2="' + (W - PAD.r) + '" y1="' + y + '" y2="' + y + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
+    svg += '<text x="' + (PAD.l - 6) + '" y="' + (y + 3) + '" text-anchor="end" class="fill-gray-500" style="font-size:10px">' + Math.round(k) + '</text>';
+  }
+
+  // Today column highlight (week mode only — tick.isToday set by buildWeekSeries).
+  for (const tick of xTicks) {
+    if (tick.isToday) {
+      const x0 = xPx(tick.x - 0.5);
+      const x1 = xPx(tick.x + 0.5);
+      svg += '<rect x="' + x0 + '" y="' + PAD.t + '" width="' + (x1 - x0) + '" height="' + innerH + '" fill="rgb(var(--walker-500))" opacity="0.06"/>';
+    }
+  }
+
+  // X gridlines + labels at labeled ticks.
+  for (const tick of xTicks) {
+    const x = xPx(tick.x);
+    if (tick.label) {
+      svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
+      const cls = tick.isToday ? 'fill-walker-500' : 'fill-gray-500';
+      svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="' + cls + '" style="font-size:10px">' + tick.label + '</text>';
+    }
+  }
+
+  // "Now" indicator (current week / current period).
+  if (nowX !== null) {
+    const x = xPx(nowX);
+    svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--walker-500))" stroke-width="1" stroke-dasharray="2,3" opacity="0.5"/>';
+  }
+
+  // Polylines.
+  for (const s of series) {
+    const pts = s.points.map(p => xPx(p.x) + ',' + yPx(p.kcal)).join(' ');
+    svg += '<polyline points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+  }
+
+  // Dots at non-zero points.
+  for (const s of series) {
+    for (const p of s.points) {
+      if (p.kcal > 0) svg += '<circle cx="' + xPx(p.x) + '" cy="' + yPx(p.kcal) + '" r="3" fill="' + s.color + '"/>';
+    }
+  }
+
+  // Axis unit label.
+  if (axisLabel) {
+    svg += '<text x="' + (W - PAD.r) + '" y="' + (H - 2) + '" text-anchor="end" class="fill-gray-600" style="font-size:9px">' + axisLabel + '</text>';
+  }
+
+  svg += '<line id="chart-crosshair" x1="0" x2="0" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-500))" stroke-width="1" stroke-dasharray="3,3" opacity="0" pointer-events="none"/>';
+  svg += '<rect id="chart-hover-rect" x="' + PAD.l + '" y="' + PAD.t + '" width="' + innerW + '" height="' + innerH + '" fill="transparent"/>';
+  svg += '</svg>';
+
+  container.innerHTML = svg + '<div id="chart-tooltip" class="absolute pointer-events-none hidden bg-surface-950 border border-gray-700 rounded-lg shadow-lg px-3 py-2 text-xs" style="z-index:50; min-width:180px"></div>';
+
+  // Legend: total kcal across the displayed period.
+  legendEl.innerHTML = series.map(s => {
+    const total = s.points.reduce((sum, p) => sum + p.kcal, 0);
+    return '<div class="flex items-center gap-2 text-xs text-gray-300">' +
+      '<span class="inline-block w-3 h-3 rounded-sm" style="background:' + s.color + '"></span>' +
+      '<span>' + esc(s.name) + '</span>' +
+      '<span class="text-gray-500">' + fmtNum(total, 1) + ' kcal</span>' +
+    '</div>';
+  }).join('');
+
+  animateChartReveal(container);
+
+  // Hover: snap crosshair to nearest tick.
+  const rect = container.querySelector('#chart-hover-rect');
+  const cross = container.querySelector('#chart-crosshair');
+  const tip = container.querySelector('#chart-tooltip');
+
+  rect.addEventListener('mousemove', (e) => {
+    const bounds = container.getBoundingClientRect();
+    const px = e.clientX - bounds.left;
+    const xNearest = Math.max(0, Math.min(numTicks - 1, Math.round((px - PAD.l) / innerW * xRange - 0.5)));
+
+    cross.setAttribute('x1', xPx(xNearest));
+    cross.setAttribute('x2', xPx(xNearest));
+    cross.setAttribute('opacity', '0.7');
+
+    const ranked = series
+      .map(s => ({name: s.name, color: s.color, kcal: s.points.find(p => p.x === xNearest)?.kcal || 0}))
+      .filter(r => r.kcal > 0)
+      .sort((a, b) => b.kcal - a.kcal);
+
+    let html = '<div class="text-gray-400 mb-1">' + esc(tooltipFmt(xNearest)) + '</div>';
+    html += ranked.length === 0
+      ? '<div class="text-gray-600 italic">No activity</div>'
+      : ranked.map(r =>
+          '<div class="flex items-center justify-between gap-3 py-0.5">' +
+            '<span class="flex items-center gap-2"><span class="inline-block w-2 h-2 rounded-sm" style="background:' + r.color + '"></span>' +
+            '<span class="text-gray-200">' + esc(r.name) + '</span></span>' +
+            '<span class="text-white font-medium tabular-nums">' + fmtNum(r.kcal, 1) + ' kcal</span>' +
+          '</div>'
+        ).join('');
+    tip.innerHTML = html;
+    tip.classList.remove('hidden');
+
+    const tipW = tip.offsetWidth || 200;
+    const tipH = tip.offsetHeight || 80;
+    let tx = px + 14;
+    if (tx + tipW > bounds.width - 4) tx = px - tipW - 14;
+    let ty = e.clientY - bounds.top + 14;
+    if (ty + tipH > bounds.height - 4) ty = bounds.height - tipH - 4;
+    tip.style.left = tx + 'px';
+    tip.style.top = ty + 'px';
+  });
+
+  rect.addEventListener('mouseleave', () => {
+    cross.setAttribute('opacity', '0');
+    tip.classList.add('hidden');
+  });
+}
+
+function renderWeek() {
+  if (!lastWeekData) return;
+  const container = document.getElementById('day-chart-container');
+  const legendEl = document.getElementById('day-chart-legend');
+  const {series, xTicks, nowX, axisLabel} = buildWeekSeries(lastWeekData);
+  renderDiscreteChart(container, legendEl, series, xTicks, (xi) => {
+    const tick = xTicks[xi];
+    if (!tick) return '';
+    return new Date(tick.date + 'T00:00:00Z').toLocaleDateString('en', {timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric'});
+  }, nowX, axisLabel);
+}
+
+function renderAllTime() {
+  if (!lastAllTimeData) return;
+  const container = document.getElementById('day-chart-container');
+  const legendEl = document.getElementById('day-chart-legend');
+  const {series, xTicks, nowX, groupBy, axisLabel} = buildAllTimePeriods(lastAllTimeData);
+
+  // Update nav: show data range, disable prev/next/reset.
+  if (lastAllTimeData.length >= 2) {
+    const first = new Date(lastAllTimeData[0].date + 'T00:00:00Z');
+    const last = new Date(lastAllTimeData[lastAllTimeData.length - 1].date + 'T00:00:00Z');
+    const fmt = {timeZone: 'UTC', month: 'short', year: 'numeric'};
+    const firstStr = first.toLocaleDateString('en', fmt);
+    const lastStr = last.toLocaleDateString('en', fmt);
+    document.getElementById('nav-title').textContent = firstStr === lastStr ? firstStr : firstStr + ' – ' + lastStr;
+  } else {
+    document.getElementById('nav-title').textContent = 'All Time';
+  }
+  renderDiscreteChart(container, legendEl, series, xTicks, (xi) => {
+    const tick = xTicks[xi];
+    if (!tick) return '';
+    if (groupBy === 'week') {
+      return 'Week of ' + new Date(tick.mon + 'T00:00:00Z').toLocaleDateString('en', {timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric'});
+    }
+    const [yr, mo] = tick.monthKey.split('-').map(Number);
+    return new Date(Date.UTC(yr, mo - 1, 1)).toLocaleDateString('en', {timeZone: 'UTC', month: 'long', year: 'numeric'});
+  }, nowX, axisLabel);
+}
+
+function setChartRange(range) {
+  if (range === chartRange) return;
+
+  // Carry context when switching day→week: show the week that contains the viewed day,
+  // not necessarily the current week. This fixes the "no data" bug when the user has
+  // navigated to a past day and then clicks Week.
+  if (range === 'week' && chartRange === 'day') {
+    const viewedDate = currentDayDate || utcTodayStr();
+    const mon = isoWeekMonday(viewedDate);
+    currentWeekStart = mon === isoWeekMonday(utcTodayStr()) ? null : mon;
+  }
+
+  chartRangeSwitchedMs = Date.now();
+  chartRange = range;
+
+  // Range tab button styles.
+  for (const r of ['day', 'week', 'alltime']) {
+    const btn = document.getElementById('range-' + r);
+    btn.classList.toggle('bg-walker-500', r === range);
+    btn.classList.toggle('text-white', r === range);
+    btn.classList.toggle('text-gray-400', r !== range);
+  }
+
+  // Nav button state for all-time: disable prev/next, hide reset.
+  // Day and week: re-enable prev, show reset with correct label.
+  // (next and reset disabled states are set by renderDay / fetchWeek after data arrives.)
+  const navPrev = document.getElementById('nav-prev');
+  const navReset = document.getElementById('nav-reset');
+  const navResetLabel = document.getElementById('nav-reset-label');
+
+  if (range === 'alltime') {
+    navPrev.disabled = true;
+    navPrev.classList.add('opacity-30', 'cursor-not-allowed');
+    navReset.style.visibility = 'hidden';
+  } else {
+    navPrev.disabled = false;
+    navPrev.classList.remove('opacity-30', 'cursor-not-allowed');
+    navReset.style.visibility = 'visible';
+    navResetLabel.textContent = range === 'day' ? 'Today' : 'This Week';
+  }
+
+  if (range === 'day') fetchDay();
+  else if (range === 'week') fetchWeek();
+  else fetchAllTime();
+}
+
+// Wire unified navigation buttons.
+document.getElementById('nav-prev').addEventListener('click', () => {
+  if (chartRange === 'day') dayShiftDate(-1);
+  else if (chartRange === 'week') weekShift(-1);
+});
+document.getElementById('nav-next').addEventListener('click', () => {
+  if (chartRange === 'day' && !dayViewingToday()) dayShiftDate(1);
+  else if (chartRange === 'week' && !weekViewingCurrent()) weekShift(1);
+});
+document.getElementById('nav-reset').addEventListener('click', () => {
+  if (chartRange === 'day' && !dayViewingToday()) { currentDayDate = null; fetchDay(); }
+  else if (chartRange === 'week' && !weekViewingCurrent()) { currentWeekStart = null; fetchWeek(); }
+});
+document.getElementById('range-day').addEventListener('click', () => setChartRange('day'));
+document.getElementById('range-week').addEventListener('click', () => setChartRange('week'));
+document.getElementById('range-alltime').addEventListener('click', () => setChartRange('alltime'));
+window.addEventListener('resize', () => {
+  if (chartRange === 'day' && lastDayData) renderDay();
+  else if (chartRange === 'week' && lastWeekData) renderWeek();
+  else if (chartRange === 'alltime' && lastAllTimeData) renderAllTime();
+});
 
 // -- Profile --
 
@@ -1223,8 +1683,9 @@ function connect() {
     if (currentHistoryId) fetchHistoryClosed();
     if (currentPage === 'leaderboard') {
       fetchLeaderboard();
-      // Refetch day chart only when viewing today (past dates are immutable).
-      if (dayViewingToday()) fetchDay();
+      // Refetch chart only for live views (past dates/weeks are immutable).
+      if (chartRange === 'day' && dayViewingToday()) fetchDay();
+      else if (chartRange === 'week' && weekViewingCurrent()) fetchWeek();
     }
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
     if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();
