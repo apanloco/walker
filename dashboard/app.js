@@ -388,7 +388,7 @@ function niceMax(v) {
 }
 
 const TZ_OFFSET_SECS = -new Date().getTimezoneOffset() * 60; // stale across DST transitions; refresh fixes it
-const TZ_NAME = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName').value;
+const TZ_NAME = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value ?? 'UTC';
 
 function fmtTimeOfDay(secs) {
   if (secs === 86400) return '24:00';
