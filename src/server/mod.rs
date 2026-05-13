@@ -1,3 +1,4 @@
+pub mod alltime;
 pub mod auth;
 pub mod dashboard;
 pub mod day;
@@ -128,7 +129,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .merge(leaderboard::routes().with_state(live_ctx.clone()))
         .merge(profile::routes().with_state(live_ctx.clone()))
         .merge(history::routes().with_state(live_ctx.clone()))
-        .merge(day::routes().with_state(live_ctx))
+        .merge(day::routes().with_state(live_ctx.clone()))
+        .merge(alltime::routes().with_state(live_ctx))
         .merge(dashboard::routes(config.dev))
         .layer(axum::middleware::map_response(
             move |request_headers: axum::http::HeaderMap,
