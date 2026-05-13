@@ -498,7 +498,9 @@ function renderDay() {
   for (let t = xMin; t <= xMax + 1; t += xStep) {
     const x = xPx(t);
     svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--gray-800))" stroke-width="1"/>';
-    svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + fmtTimeOfDay(t) + '</text>';
+    if (t < xMax) {
+      svg += '<text x="' + x + '" y="' + (H - PAD.b + 14) + '" text-anchor="middle" class="fill-gray-500" style="font-size:10px">' + fmtTimeOfDay(t) + '</text>';
+    }
   }
   svg += '<text x="' + (W - PAD.r) + '" y="' + (H - PAD.b + 14) + '" text-anchor="end" class="fill-gray-600" style="font-size:9px">' + TZ_NAME + '</text>';
 
