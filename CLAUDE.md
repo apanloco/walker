@@ -12,6 +12,10 @@ This project is **spec-driven**. This file (CLAUDE.md) is the absolute source of
 
 **CLAUDE.md must be updated as part of every task.** Any change to behavior, architecture, protocol, or UI must be reflected here before the task is considered done. This file is what future conversations read first — if it's wrong, everything built on it will be wrong.
 
+**Never push without asking.** Always confirm with the user before running `git push` or any variant. No exceptions.
+
+**Always run clippy before committing.** `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must pass before any commit. This is enforced by a `.claude/settings.json` PreToolUse hook.
+
 ## TODO
 
 1. **Parameterize leaderboard date filter** — `query_leaderboard` in `db.rs` uses `format!()` to interpolate the date filter into SQL. The filter values are hardcoded server-side so this isn't injectable, but it breaks the "all queries parameterized" pattern. Refactor to use parameterized queries consistently.
@@ -240,6 +244,8 @@ UTC everywhere. All timestamps are stored as `TIMESTAMPTZ` (UTC internally). All
 This means for users east of UTC, there's a window after local midnight where "today" on the dashboard still shows the previous UTC day. This is an accepted tradeoff for simplicity — no per-user timezone config, no timezone threading through queries, and the client and server always agree on what "today" means.
 
 **Display exception:** the day chart X axis labels are shown in the viewer's local timezone (browser `getTimezoneOffset()`). The data domain is still the UTC day; only the hour numbers printed on the axis are shifted. A timezone abbreviation (e.g. "CET") derived from `Intl.DateTimeFormat` is shown at the right end of the X axis and in the hover tooltip so the displayed timezone is always explicit.
+
+Tick positions are snapped to UTC hour boundaries (floor/ceil of actual activity). For fractional-offset timezones (e.g. India UTC+5:30, Nepal UTC+5:45) axis labels will read `:30`/`:45` instead of `:00`. This is a deliberate tradeoff — no special-case alignment for fractional zones. `TZ_OFFSET_SECS` is captured once at script load and goes stale across DST transitions; a page refresh corrects it.
 
 ### Timeouts & Intervals
 
