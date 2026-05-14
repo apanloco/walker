@@ -233,7 +233,7 @@ function renderLeaderboard(elementId, entries) {
       }
       <div class="flex-1 min-w-0">
         <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${esc(e.name)}</a>
-        <div class="flex items-center gap-1 mt-0.5">${statusIndicator(e)}</div>
+        <div class="flex items-center gap-1 mt-0.5 h-4">${statusIndicator(e)}</div>
       </div>
       <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
       <div class="absolute right-0 top-full hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">
@@ -264,7 +264,7 @@ function renderDailyWinners(entries) {
         }
         <div class="flex-1 min-w-0">
           <a href="/profile/${e.id}" class="font-medium text-sm text-gray-200 truncate hover:text-white block">${esc(e.name)}</a>
-          <div class="flex items-center gap-1 mt-0.5">${status}</div>
+          <div class="flex items-center gap-1 mt-0.5 h-4">${status}</div>
         </div>
         <div class="text-right shrink-0 text-sm font-bold text-white">${e.active_calories_kcal.toFixed(1)} kcal</div>
         <div class="absolute right-0 top-full hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">
@@ -275,12 +275,14 @@ function renderDailyWinners(entries) {
 }
 
 function fetchLeaderboard() {
+  const gen = ++leaderboardFetchGen;
   fetch('/api/leaderboard')
     .then(r => {
       if (!r.ok) throw new Error(r.status);
       return r.json();
     })
     .then(data => {
+      if (gen !== leaderboardFetchGen) return;
       renderLeaderboard('lb-today', data.today);
       renderLeaderboard('lb-weekly', data.weekly);
       renderLeaderboard('lb-alltime', data.all_time);
@@ -295,10 +297,15 @@ function fetchLeaderboard() {
 let currentDayDate = null; // null = today (auto-rolls)
 let lastDayData = null;
 let chartRange = 'day'; // 'day' | 'week' | 'alltime'
-let currentWeekStart = null; // null = this ISO week (Mon), else 'YYYY-MM-DD'
+let currentWeekStart = null; // null = current 7-day window (ends today), else start 'YYYY-MM-DD'
 let lastWeekData = null;
 let lastAllTimeData = null;
-let chartRangeSwitchedMs = 0; // timestamp of last range switch, for animation gating
+let pendingChartAnimation = false; // true after range switch, cleared after first render
+let leaderboardFetchGen = 0;
+let dayFetchGen = 0;
+let weekFetchGen = 0;
+let allTimeFetchGen = 0;
+let dayChartState = null; // rendering constants from last full renderDay(); used for in-place patches
 
 function utcTodayStr() {
   const d = new Date();
@@ -312,9 +319,16 @@ function isoWeekMonday(dateStr) {
   return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
 
-function weekDates(mondayStr) {
+// Start of the current 7-day rolling window (today - 6 days).
+function last7Start() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 6);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+function weekDates(startStr) {
   const dates = [];
-  const d = new Date(mondayStr + 'T00:00:00Z');
+  const d = new Date(startStr + 'T00:00:00Z');
   for (let i = 0; i < 7; i++) {
     dates.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'));
     d.setUTCDate(d.getUTCDate() + 1);
@@ -323,18 +337,17 @@ function weekDates(mondayStr) {
 }
 
 function weekViewingCurrent() {
-  const thisWeek = isoWeekMonday(utcTodayStr());
-  return (currentWeekStart || thisWeek) === thisWeek;
+  return !currentWeekStart || currentWeekStart === last7Start();
 }
 
 function weekShift(n) {
-  const thisWeek = isoWeekMonday(utcTodayStr());
-  const mon = currentWeekStart || thisWeek;
-  const d = new Date(mon + 'T00:00:00Z');
+  const l7s = last7Start();
+  const cur = currentWeekStart || l7s;
+  const d = new Date(cur + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n * 7);
   const next = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
-  if (next > thisWeek) return;
-  currentWeekStart = next === thisWeek ? null : next;
+  if (next > l7s) return;
+  currentWeekStart = next === l7s ? null : next;
   fetchWeek();
 }
 
@@ -360,6 +373,7 @@ function userColor(id) {
 }
 
 function fetchDay() {
+  const gen = ++dayFetchGen;
   const date = currentDayDate || utcTodayStr();
   fetch('/api/day/' + date)
     .then(r => {
@@ -367,15 +381,23 @@ function fetchDay() {
       return r.json();
     })
     .then(data => {
+      if (gen !== dayFetchGen) return;
       lastDayData = data;
-      renderDay();
+      // Live update path: patch SVG elements in-place to avoid innerHTML flash.
+      // Full rebuild on first render, range switch, or past-day navigation.
+      if (dayChartState && dayChartState.viewDate === data.date && !pendingChartAnimation) {
+        patchDayLive();
+      } else {
+        renderDay();
+      }
     })
     .catch(e => console.error('Failed to fetch day:', e));
 }
 
 function fetchWeek() {
-  const mon = currentWeekStart || isoWeekMonday(utcTodayStr());
-  const dates = weekDates(mon);
+  const gen = ++weekFetchGen;
+  const start = currentWeekStart || last7Start();
+  const dates = weekDates(start);
   const isCurrent = weekViewingCurrent();
 
   document.getElementById('nav-next').disabled = isCurrent;
@@ -385,25 +407,31 @@ function fetchWeek() {
   document.getElementById('nav-reset').classList.toggle('opacity-30', isCurrent);
   document.getElementById('nav-reset').classList.toggle('cursor-not-allowed', isCurrent);
 
-  const monDate = new Date(mon + 'T00:00:00Z');
-  const sunDate = new Date(dates[6] + 'T00:00:00Z');
+  const startDate = new Date(start + 'T00:00:00Z');
+  const endDate = new Date(dates[6] + 'T00:00:00Z');
   const fmtBase = {timeZone: 'UTC', month: 'short', day: 'numeric'};
   document.getElementById('nav-title').textContent = isCurrent
-    ? 'This Week'
-    : monDate.toLocaleDateString('en', fmtBase) + ' – ' + sunDate.toLocaleDateString('en', {...fmtBase, year: 'numeric'});
+    ? 'Last 7 Days'
+    : startDate.toLocaleDateString('en', fmtBase) + ' – ' + endDate.toLocaleDateString('en', {...fmtBase, year: 'numeric'});
 
   Promise.all(dates.map(date =>
     fetch('/api/day/' + date).then(r => r.ok ? r.json() : null).catch(() => null)
   )).then(results => {
+    if (gen !== weekFetchGen) return;
     lastWeekData = dates.map((date, i) => ({date, data: results[i]}));
     renderWeek();
   });
 }
 
 function fetchAllTime() {
+  const gen = ++allTimeFetchGen;
   fetch('/api/alltime')
     .then(r => r.ok ? r.json() : [])
-    .then(data => { lastAllTimeData = data; renderAllTime(); })
+    .then(data => {
+      if (gen !== allTimeFetchGen) return;
+      lastAllTimeData = data;
+      renderAllTime();
+    })
     .catch(e => console.error('Failed to fetch alltime:', e));
 }
 
@@ -471,6 +499,7 @@ function fmtTimeOfDay(secs) {
 }
 
 function renderDay() {
+  if (chartRange !== 'day') return;
   const data = lastDayData;
   if (!data) return;
   const isToday = dayViewingToday();
@@ -545,6 +574,9 @@ function renderDay() {
   const xPx = t => PAD.l + (Math.max(xMin, Math.min(xMax, t)) - xMin) / xDomain * innerW;
   const yPx = k => PAD.t + innerH - (k / yMax) * innerH;
 
+  // Store rendering constants so patchDayLive() can update elements in-place.
+  dayChartState = {viewDate, dayStartMs, xMin, xMax, xDomain, yMax, PAD, innerW, innerH};
+
   // X tick step: aim for ~6 ticks at sensible hour multiples.
   let xStep;
   if (xDomain <= 6 * 3600) xStep = 3600;
@@ -577,16 +609,14 @@ function renderDay() {
   // "Now" line on today.
   if (isToday) {
     const nowSecs = (Date.now() - new Date(viewDate + 'T00:00:00Z').getTime()) / 1000;
-    if (nowSecs >= xMin && nowSecs <= xMax) {
-      const x = xPx(nowSecs);
-      svg += '<line x1="' + x + '" x2="' + x + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--walker-500))" stroke-width="1" stroke-dasharray="2,3" opacity="0.5"/>';
-    }
+    const nx = xPx(Math.min(nowSecs, xMax));
+    svg += '<line id="day-now-line" x1="' + nx + '" x2="' + nx + '" y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="rgb(var(--walker-500))" stroke-width="1" stroke-dasharray="2,3" opacity="' + (nowSecs >= xMin ? '0.5' : '0') + '"/>';
   }
 
   // Polylines.
   for (const s of series) {
     const pts = s.points.map(p => xPx(p.t) + ',' + yPx(p.kcal)).join(' ');
-    svg += '<polyline points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    svg += '<polyline id="day-line-' + s.id + '" points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
   }
 
   // Hover crosshair (hidden by default).
@@ -607,7 +637,7 @@ function renderDay() {
     '<div class="flex items-center gap-2 text-xs text-gray-300">' +
       '<span class="inline-block w-3 h-3 rounded-sm" style="background:' + s.color + '"></span>' +
       '<span>' + esc(s.name) + '</span>' +
-      '<span class="text-gray-500">' + fmtNum(s.points[s.points.length - 1].kcal, 1) + ' kcal</span>' +
+      '<span id="day-kcal-' + s.id + '" class="text-gray-500">' + fmtNum(s.points[s.points.length - 1].kcal, 1) + ' kcal</span>' +
     '</div>'
   ).join('');
 
@@ -659,11 +689,71 @@ function renderDay() {
   });
 }
 
+// In-place live update for the day chart: patches only the elements that change
+// (polylines, "now" line, legend kcal) without replacing container.innerHTML.
+// Falls back to a full renderDay() if the scale or user set changed.
+function patchDayLive() {
+  if (chartRange !== 'day') return;
+  if (!lastDayData || !dayChartState) { renderDay(); return; }
+  const data = lastDayData;
+  const state = dayChartState;
+  if (state.viewDate !== data.date) { renderDay(); return; }
+
+  const container = document.getElementById('day-chart-container');
+
+  // Recompute user series from current data (buildUserPoints extends open segment to "now").
+  const isToday = dayViewingToday();
+  const series = data.users.map(u => ({
+    id: u.id,
+    points: buildUserPoints(u, data.date, isToday),
+  }));
+
+  // Fall back to full render if y-scale needs to grow or users appeared/disappeared.
+  const newMaxKcal = Math.max(10, ...series.map(s => s.points[s.points.length - 1].kcal));
+  if (niceMax(newMaxKcal * 1.1) !== state.yMax) { renderDay(); return; }
+  const existingLines = container.querySelectorAll('[id^="day-line-"]');
+  if (existingLines.length !== series.length) { renderDay(); return; }
+
+  const {dayStartMs, xMin, xMax, xDomain, yMax, PAD, innerW, innerH} = state;
+  const nowSecs = (Date.now() - dayStartMs) / 1000;
+  // Fall back if time has moved past the current x-axis right edge.
+  if (nowSecs > xMax + 60) { renderDay(); return; }
+
+  const xPx = t => PAD.l + (Math.max(xMin, Math.min(xMax, t)) - xMin) / xDomain * innerW;
+  const yPx = k => PAD.t + innerH - (k / yMax) * innerH;
+
+  // Patch "now" line.
+  const nowLine = container.querySelector('#day-now-line');
+  if (nowLine) {
+    const nx = xPx(Math.min(nowSecs, xMax));
+    nowLine.setAttribute('x1', nx);
+    nowLine.setAttribute('x2', nx);
+    nowLine.setAttribute('opacity', nowSecs >= xMin ? '0.5' : '0');
+  }
+
+  // Patch each user's polyline and legend kcal.
+  for (const s of series) {
+    const polyline = container.querySelector('#day-line-' + s.id);
+    if (polyline) {
+      polyline.setAttribute('points', s.points.map(p => xPx(p.t) + ',' + yPx(p.kcal)).join(' '));
+      // Clear any in-progress draw-in animation — patching points changes path length,
+      // which breaks the strokeDasharray/strokeDashoffset values set by animateChartReveal.
+      polyline.style.strokeDasharray = '';
+      polyline.style.strokeDashoffset = '';
+      polyline.style.transition = '';
+    }
+    const kcalEl = document.getElementById('day-kcal-' + s.id);
+    if (kcalEl) {
+      kcalEl.textContent = fmtNum(s.points[s.points.length - 1].kcal, 1) + ' kcal';
+    }
+  }
+}
+
 // -- Week and All Time chart views --
 
 function buildWeekSeries(weekEntries) {
   const todayStr = utcTodayStr();
-  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const DAY_ABBREVS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const userMap = new Map();
 
   weekEntries.forEach(({date, data}, i) => {
@@ -678,7 +768,10 @@ function buildWeekSeries(weekEntries) {
     .filter(u => u.kcals.some(k => k > 0))
     .map(u => ({id: u.id, name: u.name, color: u.color, points: u.kcals.map((kcal, i) => ({x: i, kcal}))}));
 
-  const xTicks = weekEntries.map(({date}, i) => ({x: i, label: DAY_NAMES[i], isToday: date === todayStr, date}));
+  const xTicks = weekEntries.map(({date}, i) => {
+    const d = new Date(date + 'T00:00:00Z');
+    return {x: i, label: DAY_ABBREVS[d.getUTCDay()], isToday: date === todayStr, date};
+  });
   const todayIndex = weekEntries.findIndex(e => e.date === todayStr);
   const nowX = weekViewingCurrent() && todayIndex >= 0 ? todayIndex : null;
 
@@ -770,9 +863,10 @@ function buildAllTimeByMonth(allTimeData) {
 }
 
 // Animate chart lines drawing on from left to right (stroke-dashoffset trick).
-// Only fires within 2s of a range switch — not on routine live refreshes.
+// Only fires once per range switch — not on routine live refreshes.
 function animateChartReveal(container) {
-  if (Date.now() - chartRangeSwitchedMs > 2000) return;
+  if (!pendingChartAnimation) return;
+  pendingChartAnimation = false;
 
   const polylines = container.querySelectorAll('svg polyline');
   const circles = container.querySelectorAll('svg circle');
@@ -944,6 +1038,7 @@ function renderDiscreteChart(container, legendEl, series, xTicks, tooltipFmt, no
 }
 
 function renderWeek() {
+  if (chartRange !== 'week') return;
   if (!lastWeekData) return;
   const container = document.getElementById('day-chart-container');
   const legendEl = document.getElementById('day-chart-legend');
@@ -956,6 +1051,7 @@ function renderWeek() {
 }
 
 function renderAllTime() {
+  if (chartRange !== 'alltime') return;
   if (!lastAllTimeData) return;
   const container = document.getElementById('day-chart-container');
   const legendEl = document.getElementById('day-chart-legend');
@@ -986,16 +1082,8 @@ function renderAllTime() {
 function setChartRange(range) {
   if (range === chartRange) return;
 
-  // Carry context when switching day→week: show the week that contains the viewed day,
-  // not necessarily the current week. This fixes the "no data" bug when the user has
-  // navigated to a past day and then clicks Week.
-  if (range === 'week' && chartRange === 'day') {
-    const viewedDate = currentDayDate || utcTodayStr();
-    const mon = isoWeekMonday(viewedDate);
-    currentWeekStart = mon === isoWeekMonday(utcTodayStr()) ? null : mon;
-  }
-
-  chartRangeSwitchedMs = Date.now();
+  pendingChartAnimation = true;
+  if (range !== 'day') dayChartState = null;
   chartRange = range;
 
   // Range tab button styles.
@@ -1683,9 +1771,11 @@ function connect() {
     if (currentHistoryId) fetchHistoryClosed();
     if (currentPage === 'leaderboard') {
       fetchLeaderboard();
-      // Refetch chart only for live views (past dates/weeks are immutable).
+      // Refetch the day chart live — it shows a continuous cumulative curve.
+      // The week chart is NOT live-refreshed: it shows daily totals, and the full
+      // SVG rebuild every 5s (7 parallel fetches → innerHTML replacement) causes a
+      // visible flash that looks like the draw-in animation restarting.
       if (chartRange === 'day' && dayViewingToday()) fetchDay();
-      else if (chartRange === 'week' && weekViewingCurrent()) fetchWeek();
     }
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
     if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();
