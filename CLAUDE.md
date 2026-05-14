@@ -324,11 +324,11 @@ The `Option` matters: resetting to `0` would treat the post-absorption value (e.
 ```
 The endpoint returns *what was true at query time* — for an open segment, `duration_s` is whatever value was last written by a heartbeat. The client extends it to "now" using `started_at` (linear ramp at the segment's kcal/sec rate) so the live line keeps growing between refetches.
 
-**`GET /api/alltime`** — public, no auth. Daily walking totals per user, all time. One entry per UTC day with any walking activity.
+**`GET /api/alltime`** — public, no auth. Optional `?from=YYYY-MM-DD&to=YYYY-MM-DD` to restrict the date range (both inclusive). Daily walking totals per user across the requested range.
 ```json
 [{"date": "2025-01-01", "users": [{"id": "uuid", "name": "alice", "avatar_url": "...", "kcal": 150.3}]}, ...]
 ```
-Used by the leaderboard chart's Week and All Time views. The client groups entries into ISO weeks or calendar months and renders them as a discrete line chart.
+Used by the leaderboard chart's Week and All Time views. Week passes `?from=&to=` for the 7-day window; All Time omits the params. The client groups entries into ISO weeks or calendar months and renders them as a discrete line chart.
 
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
@@ -389,7 +389,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications
 - **Chart** (full-width, below the four panels): three time ranges selectable via a segmented pill control (Day / Week / All Time, default Day). Each user gets a stable color derived from a hash of their UUID. Vertical orange dashed "now" indicator on today / current week / current period. Hover shows a crosshair + tooltip ranked by kcal. Small axis unit label at bottom-right ("hours (UTC)", "days", "weeks", "months"). Legend shows user color + name + total kcal for the viewed period.
   - **Day**: cumulative active kcal per user across the UTC day. X axis 00:00–24:00 in the viewer's local timezone (computed client-side via `TZ_OFFSET_SECS`; the underlying data domain is still the UTC day), Y axis kcal. Hover interpolates continuously along each user's curve. Navigation: ←, →, ⟲ Today; disabled when already on today. Refetched on `/ws/live` only when viewing today. Data from `/api/day/{date}`.
-  - **Week**: daily total kcal per user for the last 7 days ending today (rolling window, not Mon–Sun). X axis = day name labels derived from actual dates, Y axis kcal. Today's column highlighted. Dots at non-zero points, lines connecting all 7 days. Hover snaps to nearest day. Navigation: ←, →, ⟲ Last 7 Days; disabled when on current window. **Not live-refreshed** — data loads when you navigate to the tab. (The server fires `/ws/live` every 5s via disconnect checker; 7 parallel fetches + full SVG rebuild each time causes a visible flash that looks like the animation restarting.) Data from 7 parallel `/api/day/{date}` fetches.
+  - **Week**: daily total kcal per user for the last 7 days ending today (rolling window, not Mon–Sun). X axis = day name labels derived from actual dates, Y axis kcal. Today's column highlighted. Dots at non-zero points, lines connecting all 7 days. Hover snaps to nearest day. Navigation: ←, →, ⟲ Last 7 Days; disabled when on current window. Refetched on `/ws/live` notifications when viewing the current window. Data from `/api/alltime?from={start}&to={end}` (single request; counts only closed segments, so today's active open segment is not included until it closes).
   - **All Time**: per-user totals grouped by week or month (auto-selected: months if span > 84 days, weeks otherwise). X axis labels at month boundaries (week mode) or at each month (month mode). Hover snaps to nearest period. No navigation. Not refreshed live. Data from `/api/alltime`.
 
 **Profile page** (login required):
