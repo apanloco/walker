@@ -1,4 +1,10 @@
-use axum::{Router, extract::State, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{Query, State},
+    response::IntoResponse,
+    routing::get,
+};
+use serde::Deserialize;
 use sqlx::Row;
 use std::collections::BTreeMap;
 
@@ -8,8 +14,18 @@ pub fn routes() -> Router<SharedLive> {
     Router::new().route("/api/alltime", get(get_alltime))
 }
 
-/// Daily walking totals per user across all time. Public.
-async fn get_alltime(State(ctx): State<SharedLive>) -> impl IntoResponse {
+#[derive(Deserialize)]
+struct AlltimeParams {
+    from: Option<String>, // YYYY-MM-DD inclusive lower bound
+    to: Option<String>,   // YYYY-MM-DD inclusive upper bound
+}
+
+/// Daily walking totals per user. Public.
+/// Optional ?from=YYYY-MM-DD&to=YYYY-MM-DD to restrict the date range.
+async fn get_alltime(
+    State(ctx): State<SharedLive>,
+    Query(params): Query<AlltimeParams>,
+) -> impl IntoResponse {
     let pool = &ctx.db_pool;
 
     let rows = match sqlx::query(
@@ -19,9 +35,13 @@ async fn get_alltime(State(ctx): State<SharedLive>) -> impl IntoResponse {
          FROM segments s
          JOIN users u ON u.id = s.user_id
          WHERE s.moving = true AND s.open = false
+           AND ($1::date IS NULL OR (s.started_at AT TIME ZONE 'UTC')::date >= $1::date)
+           AND ($2::date IS NULL OR (s.started_at AT TIME ZONE 'UTC')::date <= $2::date)
          GROUP BY (s.started_at AT TIME ZONE 'UTC')::date, u.id, u.display_name, u.avatar_url
          ORDER BY date ASC",
     )
+    .bind(params.from.as_deref())
+    .bind(params.to.as_deref())
     .fetch_all(pool.as_ref())
     .await
     {
