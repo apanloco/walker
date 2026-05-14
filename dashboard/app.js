@@ -414,13 +414,14 @@ function fetchWeek() {
     ? 'Last 7 Days'
     : startDate.toLocaleDateString('en', fmtBase) + ' – ' + endDate.toLocaleDateString('en', {...fmtBase, year: 'numeric'});
 
-  Promise.all(dates.map(date =>
-    fetch('/api/day/' + date).then(r => r.ok ? r.json() : null).catch(() => null)
-  )).then(results => {
-    if (gen !== weekFetchGen) return;
-    lastWeekData = dates.map((date, i) => ({date, data: results[i]}));
-    renderWeek();
-  });
+  fetch('/api/alltime?from=' + dates[0] + '&to=' + dates[6])
+    .then(r => r.ok ? r.json() : [])
+    .catch(() => [])
+    .then(data => {
+      if (gen !== weekFetchGen) return;
+      lastWeekData = data;
+      renderWeek();
+    });
 }
 
 function fetchAllTime() {
@@ -751,16 +752,21 @@ function patchDayLive() {
 
 // -- Week and All Time chart views --
 
-function buildWeekSeries(weekEntries) {
+function buildWeekSeries(allTimeData, start) {
   const todayStr = utcTodayStr();
   const DAY_ABBREVS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const userMap = new Map();
+  const dates = weekDates(start);
 
-  weekEntries.forEach(({date, data}, i) => {
-    if (!data) return;
-    for (const u of data.users) {
+  // Index alltime entries by date for O(1) slot lookup.
+  const byDate = new Map((allTimeData || []).map(e => [e.date, e]));
+
+  const userMap = new Map();
+  dates.forEach((date, i) => {
+    const entry = byDate.get(date);
+    if (!entry) return;
+    for (const u of entry.users) {
       if (!userMap.has(u.id)) userMap.set(u.id, {id: u.id, name: u.name, color: userColor(u.id), kcals: new Array(7).fill(0)});
-      userMap.get(u.id).kcals[i] = u.segments.reduce((sum, seg) => sum + seg.active_calories_kcal, 0);
+      userMap.get(u.id).kcals[i] = u.kcal;
     }
   });
 
@@ -768,11 +774,11 @@ function buildWeekSeries(weekEntries) {
     .filter(u => u.kcals.some(k => k > 0))
     .map(u => ({id: u.id, name: u.name, color: u.color, points: u.kcals.map((kcal, i) => ({x: i, kcal}))}));
 
-  const xTicks = weekEntries.map(({date}, i) => {
+  const xTicks = dates.map((date, i) => {
     const d = new Date(date + 'T00:00:00Z');
     return {x: i, label: DAY_ABBREVS[d.getUTCDay()], isToday: date === todayStr, date};
   });
-  const todayIndex = weekEntries.findIndex(e => e.date === todayStr);
+  const todayIndex = dates.indexOf(todayStr);
   const nowX = weekViewingCurrent() && todayIndex >= 0 ? todayIndex : null;
 
   return {series, xTicks, nowX, axisLabel: 'days'};
@@ -1042,7 +1048,7 @@ function renderWeek() {
   if (!lastWeekData) return;
   const container = document.getElementById('day-chart-container');
   const legendEl = document.getElementById('day-chart-legend');
-  const {series, xTicks, nowX, axisLabel} = buildWeekSeries(lastWeekData);
+  const {series, xTicks, nowX, axisLabel} = buildWeekSeries(lastWeekData, currentWeekStart || last7Start());
   renderDiscreteChart(container, legendEl, series, xTicks, (xi) => {
     const tick = xTicks[xi];
     if (!tick) return '';
@@ -1771,11 +1777,8 @@ function connect() {
     if (currentHistoryId) fetchHistoryClosed();
     if (currentPage === 'leaderboard') {
       fetchLeaderboard();
-      // Refetch the day chart live — it shows a continuous cumulative curve.
-      // The week chart is NOT live-refreshed: it shows daily totals, and the full
-      // SVG rebuild every 5s (7 parallel fetches → innerHTML replacement) causes a
-      // visible flash that looks like the draw-in animation restarting.
       if (chartRange === 'day' && dayViewingToday()) fetchDay();
+      if (chartRange === 'week' && weekViewingCurrent()) fetchWeek();
     }
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
     if (!document.getElementById('page-profile').classList.contains('hidden')) fetchProfile();
