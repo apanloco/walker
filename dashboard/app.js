@@ -1777,7 +1777,10 @@ function connect() {
     if (currentHistoryId) fetchHistoryClosed();
     if (currentPage === 'leaderboard') {
       fetchLeaderboard();
-      if (chartRange === 'day' && dayViewingToday()) fetchDay();
+      // Only live-refresh the day chart when it's already stably showing today.
+      // If dayChartState is absent or stale (navigation fetch in-flight), skip —
+      // the navigation fetch will render and settle dayChartState; WS resumes after.
+      if (chartRange === 'day' && dayViewingToday() && dayChartState && dayChartState.viewDate === utcTodayStr()) fetchDay();
       if (chartRange === 'week' && weekViewingCurrent()) fetchWeek();
     }
     // Refetch profile if viewing it — updates Last 7 Days bars and live indicator.
