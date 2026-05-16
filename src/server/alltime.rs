@@ -34,7 +34,7 @@ async fn get_alltime(
                 SUM(active_calories(s.speed_kmh, s.incline_percent, s.weight_kg, s.duration_s))::FLOAT8 AS kcal
          FROM segments s
          JOIN users u ON u.id = s.user_id
-         WHERE s.moving = true AND s.open = false
+         WHERE s.moving = true
            AND ($1::date IS NULL OR (s.started_at AT TIME ZONE 'UTC')::date >= $1::date)
            AND ($2::date IS NULL OR (s.started_at AT TIME ZONE 'UTC')::date <= $2::date)
          GROUP BY (s.started_at AT TIME ZONE 'UTC')::date, u.id, u.display_name, u.avatar_url
