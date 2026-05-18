@@ -810,17 +810,28 @@ async fn walk(
 
         step_tracker.reset();
         activity_tracker.reset();
-        let _ = device.disconnect().await;
 
         match exit {
-            WalkExit::UserQuit => return Ok(()),
+            WalkExit::UserQuit => {
+                let _ = device.disconnect().await;
+                return Ok(());
+            }
             WalkExit::Timeout => {
+                // Peripheral may still be alive on the OS side — clean disconnect
+                // frees the connection before we re-scan.
+                let _ = device.disconnect().await;
                 info!(
                     "{}",
                     "No data for 10 seconds — assuming disconnected".yellow()
                 );
             }
-            WalkExit::StreamEnded => {}
+            WalkExit::StreamEnded => {
+                // btleplug's per-peripheral event loop has already exited (e.g.
+                // "Event receiver died" on macOS CoreBluetooth). Calling
+                // disconnect() now would hang forever waiting on a dead channel,
+                // so we drop the peripheral instead.
+                info!("{}", "BLE stream ended — peripheral gone.".yellow());
+            }
         }
 
         info!(

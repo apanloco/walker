@@ -699,6 +699,7 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 - Checks adapter's peripheral cache before scanning (instant hit on reconnects)
 - Step and activity trackers reset on Pausing/Paused/Standby/Off and on BLE reconnect
 - macOS: Bluetooth permission pre-check prevents CoreBluetooth segfault
+- On `StreamEnded` (notification stream returns `None`) we skip `device.disconnect()` and drop the peripheral instead. btleplug's per-peripheral event loop has already exited at that point (on macOS this surfaces as the INFO line `Event receiver died, breaking out of corebluetooth device loop.`), and calling `disconnect()` would await a dead channel forever — silently blocking the reconnect path. `UserQuit` and `Timeout` still call `disconnect()` because the peripheral may still be alive on the OS side.
 
 ## Future Features
 
