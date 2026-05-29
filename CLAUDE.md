@@ -622,8 +622,9 @@ walker walk --auto-stop 5 # auto-stop after 5 min of idle
 
 On connect, prints a banner like `Connected to device: UREVO SpaceWalk E1L (URTM041)` followed by control hints for the model.
 
-**Speed control (when supported by the device).** On connect, if the profile's `capabilities().speed_control` is true, the terminal enters raw mode and captures arrow keys:
+**Speed control (when supported by the device).** On connect, if the profile's `capabilities().speed_control` is true, the terminal enters raw mode and captures speed keys:
 - `↑` / `↓` adjust target speed by 0.1 km/h, clamped to the model's `speed_range_kmh`
+- `1`–`9` jump directly to N km/h (e.g. `5` → 5.0 km/h). Digits outside the model's `speed_range_kmh` are silently suppressed (same treatment as arrow-at-boundary), so on a 1.0–6.0 km/h model only 1–6 do anything. The wider range is wired in for future faster models.
 - `Ctrl+C` or `q` stops the command and restores cooked mode
 - **Target mirrors the device's reported speed on every Running data packet**, except for a short ~750 ms grace window after we issue a `set_speed` write (the treadmill takes ~300 ms to reflect the new target, so a stale in-flight data packet would otherwise undo our press). This covers the initial sync at session start AND any remote-induced changes mid-session. The one other exception is Pausing — the device reports a decreasing speed as the belt winds down, but we bail out of the sync path in that branch anyway.
 - **Arrow keys are only honoured when `last_status == Running`**. The treadmill silently ignores speed writes in other states, so we suppress the keypress entirely (no write, no print, no beep) rather than faking a target change.

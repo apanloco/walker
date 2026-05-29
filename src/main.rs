@@ -411,7 +411,7 @@ fn hex(bytes: &[u8]) -> String {
         .join(" ")
 }
 
-/// RAII guard that puts the terminal in raw mode so we can capture arrow keys
+/// RAII guard that puts the terminal in raw mode so we can capture speed keys
 /// without line buffering, and restores cooked mode on drop (including panics).
 #[cfg(feature = "client")]
 struct RawModeGuard;
@@ -584,9 +584,10 @@ async fn walk(
         if caps.speed_control {
             let (min, max) = caps.speed_range_kmh;
             println!(
-                "  Press {} / {} to change speed by 0.1 km/h ({min:.1}–{max:.1} km/h) — Ctrl+C or 'q' to stop",
+                "  Press {} / {} to change speed by 0.1 km/h, {} to jump to N km/h ({min:.1}–{max:.1} km/h) — Ctrl+C or 'q' to stop",
                 "↑".bold(),
                 "↓".bold(),
+                "1–9".bold(),
             );
         } else {
             println!("  {}", "Listening for data — press Ctrl+C to stop".green());
@@ -770,19 +771,31 @@ async fn walk(
                         (KeyCode::Char('q'), _) => {
                             break WalkExit::UserQuit;
                         }
-                        (KeyCode::Up, _) | (KeyCode::Down, _) => {
+                        (KeyCode::Up, _) | (KeyCode::Down, _) | (KeyCode::Char('1'..='9'), _) => {
                             // The treadmill only accepts speed changes while
                             // Running. Writing in other states is silently
-                            // ignored by the device — suppress the arrow so
+                            // ignored by the device — suppress the key so
                             // we don't print phantom "Target speed set" lines.
                             if last_status != Some(TreadmillStatus::Running) {
                                 continue;
                             }
-                            let step = if matches!(ke.code, KeyCode::Up) { 0.1 } else { -0.1 };
                             let (min, max) = caps.speed_range_kmh;
-                            let new_target = (target_speed_kmh + step).clamp(min, max);
-                            // Already at the boundary — skip write (no point
-                            // beeping the treadmill) and the redundant print.
+                            let new_target = match ke.code {
+                                KeyCode::Up => (target_speed_kmh + 0.1).clamp(min, max),
+                                KeyCode::Down => (target_speed_kmh - 0.1).clamp(min, max),
+                                KeyCode::Char(c) => {
+                                    let n = (c as u8 - b'0') as f32;
+                                    // Digit outside the device's range: suppress
+                                    // (same treatment as arrow-at-boundary).
+                                    if n < min || n > max {
+                                        continue;
+                                    }
+                                    n
+                                }
+                                _ => unreachable!(),
+                            };
+                            // Already at the boundary or same value — skip write
+                            // (no point beeping the treadmill) and the redundant print.
                             if new_target != target_speed_kmh {
                                 target_speed_kmh = new_target;
                                 display::print_target_speed(target_speed_kmh);
