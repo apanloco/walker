@@ -259,6 +259,8 @@ All timing constants in one place. Referenced throughout this doc.
 | Client heartbeat | ~1s | reporter.rs | How often the client sends updates to the server |
 | Client idle detection | 3s (≥2 km/h), 5s (<2 km/h) | activity.rs | Speed-dependent: no step change → IDLE |
 | BLE silent disconnect | 10s | ble.rs | Detect treadmill that stopped sending data |
+| BLE disconnect bound | 5s | main.rs | Max wait on `device.disconnect()` before abandoning the peripheral. Load-bearing on macOS (a dead CoreBluetooth event loop hangs disconnect forever); a no-op ceiling on Linux, where disconnect returns promptly. |
+| BLE connect bound | 10s | main.rs | Max wait on `device.connect()` before treating it as failed and retrying. Load-bearing on macOS (CoreBluetooth's connect has no timeout and hangs against a powered-off device); a no-op ceiling on Linux. |
 | BLE reconnect retry | 3s | ble.rs | Delay before scanning again after disconnect |
 | Server disconnect check interval | 5s | live.rs | How often the server checks for stale heartbeats |
 | Server disconnect threshold | 30s | live.rs | No heartbeat for this long → close segment |
@@ -700,7 +702,9 @@ Production at `https://walker.akerud.se`. Dockerfile builds server-only with dep
 - Checks adapter's peripheral cache before scanning (instant hit on reconnects)
 - Step and activity trackers reset on Pausing/Paused/Standby/Off and on BLE reconnect
 - macOS: Bluetooth permission pre-check prevents CoreBluetooth segfault
-- On `StreamEnded` (notification stream returns `None`) we skip `device.disconnect()` and drop the peripheral instead. btleplug's per-peripheral event loop has already exited at that point (on macOS this surfaces as the INFO line `Event receiver died, breaking out of corebluetooth device loop.`), and calling `disconnect()` would await a dead channel forever — silently blocking the reconnect path. `UserQuit` and `Timeout` still call `disconnect()` because the peripheral may still be alive on the OS side.
+- On `StreamEnded` (the notification stream yields `None`) we skip `device.disconnect()` — btleplug's per-peripheral event loop has already exited and `disconnect()` would await a dead reply forever. This branch is the safety net for a genuine stream close; on macOS power-off it rarely fires (see next bullet).
+- **macOS reconnect after the treadmill powers off** is the real failure mode. CoreBluetooth tears down the peripheral's event loop (the INFO line `Event receiver died, breaking out of corebluetooth device loop.`), but the broadcast notification stream stays *open*: our `Peripheral` still holds the sender's `Arc`, so the stream goes **silent without yielding `None`** and `StreamEnded` never fires. The walk loop falls through to the 10s data `Timeout` instead. There, an unbounded `device.disconnect()` hangs on a CoreBluetooth reply that never comes — and on the next iteration `device.connect()` would hang the same way (CoreBluetooth's connect has no timeout against a powered-off device). Both calls are therefore wrapped: `disconnect_bounded()` (5s cap) and `connect_bounded()` (10s cap, surfaced as a retryable error that the reconnect loop already handles). btleplug stores the connect future in a single-slot per-peripheral `Option` (latest-wins), so a re-issued connect after a timeout replaces the abandoned waiter and the eventual `didConnect` routes to the live one. The peripheral handle frees when it goes out of scope at the end of the loop iteration.
+- The bounds are cross-platform, not `#[cfg]`-gated. On **Linux/BlueZ** `connect()`/`disconnect()` return promptly so the timers never fire — behavior is unchanged; the bound is only a ceiling against "hang forever." (BlueZ also keeps the GATT link up through standby, so notifications just pause and resume on the same connection — no teardown, no `Event receiver died`, no reconnect — which is why this hang was never observed on Linux.)
 
 ## Future Features
 

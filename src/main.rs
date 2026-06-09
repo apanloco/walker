@@ -431,6 +431,52 @@ impl Drop for RawModeGuard {
     }
 }
 
+// --- BLE connect/disconnect, timeout-bounded ---
+//
+// Both calls are wrapped in a timeout. On Linux/BlueZ they return promptly, so
+// the timer never fires and behavior is unchanged — the bound is only a ceiling
+// against "hang forever," which we never want on any platform. On macOS it's
+// load-bearing: when the treadmill powers off, CoreBluetooth's per-peripheral
+// event loop dies ("Event receiver died, breaking out of corebluetooth device
+// loop") but the broadcast notification stream stays open — our `Peripheral`
+// still holds the sender's `Arc`, so the stream goes *silent without yielding
+// `None`* and `StreamEnded` never fires. The walk loop instead falls through to
+// the 10s data `Timeout`, and an unbounded `disconnect()`/`connect()` there
+// awaits a CoreBluetooth reply that never comes — freezing the reconnect path
+// until the app is restarted. The bounds let reconnect always make progress.
+
+/// Disconnect, bounded so a dead CoreBluetooth event loop can't hang forever.
+/// The peripheral handle frees by going out of scope at the end of the reconnect
+/// loop iteration regardless of whether the disconnect actually replied.
+#[cfg(feature = "client")]
+async fn disconnect_bounded(device: &btleplug::platform::Peripheral) {
+    use btleplug::api::Peripheral;
+    use std::time::Duration;
+    if tokio::time::timeout(Duration::from_secs(5), device.disconnect())
+        .await
+        .is_err()
+    {
+        tracing::warn!("Disconnect timed out — abandoning peripheral, will rescan");
+    }
+}
+
+/// Connect, bounded by a timeout. CoreBluetooth's `connectPeripheral` has no
+/// timeout and stays pending forever against a powered-off device, so `connect()`
+/// can hang the same way `disconnect()` does. The bound surfaces it as an error,
+/// which the reconnect loop already handles (retry after a delay). btleplug
+/// stores the connect future in a single-slot per-peripheral `Option`
+/// (latest-wins), so a re-issued connect replaces the abandoned waiter and the
+/// eventual `didConnect` routes to the live one — no pile-up, no misrouting.
+#[cfg(feature = "client")]
+async fn connect_bounded(device: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
+    use btleplug::api::Peripheral;
+    use std::time::Duration;
+    match tokio::time::timeout(Duration::from_secs(10), device.connect()).await {
+        Ok(r) => r.map_err(Into::into),
+        Err(_) => anyhow::bail!("Connect timed out"),
+    }
+}
+
 /// Why the inner walk loop exited.
 #[cfg(feature = "client")]
 enum WalkExit {
@@ -523,7 +569,7 @@ async fn walk(
             "Found walking machine, connecting..."
         );
 
-        if let Err(e) = device.connect().await {
+        if let Err(e) = connect_bounded(&device).await {
             error!(error = %e, "Failed to connect, retrying in 3 seconds...");
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             continue;
@@ -567,7 +613,10 @@ async fn walk(
             Ok(s) => s,
             Err(e) => {
                 error!(error = %e, "Connection setup failed, retrying in 3 seconds...");
-                let _ = device.disconnect().await;
+                // Setup runs after a successful connect, so the peripheral
+                // exists and its event loop can die mid-setup if the treadmill
+                // powers off — bound the disconnect like the other paths.
+                disconnect_bounded(&device).await;
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 continue;
             }
@@ -826,17 +875,19 @@ async fn walk(
 
         match exit {
             WalkExit::UserQuit => {
-                let _ = device.disconnect().await;
+                disconnect_bounded(&device).await;
                 return Ok(());
             }
             WalkExit::Timeout => {
-                // Peripheral may still be alive on the OS side — clean disconnect
-                // frees the connection before we re-scan.
-                let _ = device.disconnect().await;
                 info!(
                     "{}",
                     "No data for 10 seconds — assuming disconnected".yellow()
                 );
+                // Peripheral may still be alive on the OS side — clean disconnect
+                // frees the connection before we re-scan. But if the device
+                // powered off, its event loop is already dead and disconnect()
+                // would hang forever, so it's bounded by a timeout.
+                disconnect_bounded(&device).await;
             }
             WalkExit::StreamEnded => {
                 // btleplug's per-peripheral event loop has already exited (e.g.
