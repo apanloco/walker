@@ -144,3 +144,20 @@ pub async fn subscribe_notify(
     );
     Ok(subscribed)
 }
+
+/// Is the adapter's backend event loop still answering?
+///
+/// Round-trips one message through it. A dead loop fails the send immediately
+/// (btleplug reports `Channel closed`); a wedged one never replies, which the
+/// timeout covers. Either way the adapter is finished — it cannot connect,
+/// scan, or be revived, and every later call on it fails forever.
+///
+/// Called only from failure paths in the reconnect loop, so a healthy session
+/// never pays for it. A `false` here means "build a new adapter", never
+/// "the treadmill is off" — a powered-off treadmill answers this just fine.
+pub async fn adapter_alive(adapter: &Adapter) -> bool {
+    matches!(
+        tokio::time::timeout(Duration::from_secs(5), adapter.adapter_state()).await,
+        Ok(Ok(_))
+    )
+}

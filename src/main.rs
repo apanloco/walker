@@ -444,6 +444,13 @@ impl Drop for RawModeGuard {
 // the 10s data `Timeout`, and an unbounded `disconnect()`/`connect()` there
 // awaits a CoreBluetooth reply that never comes — freezing the reconnect path
 // until the app is restarted. The bounds let reconnect always make progress.
+//
+// Connect uses btleplug's own `connect_with_timeout()`; disconnect has no
+// upstream equivalent, so it keeps the local wrapper below.
+
+/// Max wait on `connect()`. See the comment above for why it's bounded.
+#[cfg(feature = "client")]
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Disconnect, bounded so a dead CoreBluetooth event loop can't hang forever.
 /// The peripheral handle frees by going out of scope at the end of the reconnect
@@ -460,20 +467,30 @@ async fn disconnect_bounded(device: &btleplug::platform::Peripheral) {
     }
 }
 
-/// Connect, bounded by a timeout. CoreBluetooth's `connectPeripheral` has no
-/// timeout and stays pending forever against a powered-off device, so `connect()`
-/// can hang the same way `disconnect()` does. The bound surfaces it as an error,
-/// which the reconnect loop already handles (retry after a delay). btleplug
-/// stores the connect future in a single-slot per-peripheral `Option`
-/// (latest-wins), so a re-issued connect replaces the abandoned waiter and the
-/// eventual `didConnect` routes to the live one — no pile-up, no misrouting.
+/// Replace the adapter if its backend event loop has stopped answering.
+///
+/// A panic on btleplug's CoreBluetooth thread kills that loop for the life of
+/// the process: the adapter's peripheral cache still resolves (so scanning looks
+/// like it works), but every connect fails instantly with `Channel closed`, and
+/// the reconnect loop below would retry a corpse until the user notices and
+/// restarts. Building a fresh adapter starts a fresh backend thread.
+///
+/// Only called from failure paths, and only acts when the probe says the adapter
+/// is gone — a treadmill that is merely powered off leaves it untouched. If the
+/// rebuild itself fails we keep the old adapter and try again on the next
+/// failure, since the alternative is giving up entirely.
 #[cfg(feature = "client")]
-async fn connect_bounded(device: &btleplug::platform::Peripheral) -> anyhow::Result<()> {
-    use btleplug::api::Peripheral;
-    use std::time::Duration;
-    match tokio::time::timeout(Duration::from_secs(10), device.connect()).await {
-        Ok(r) => r.map_err(Into::into),
-        Err(_) => anyhow::bail!("Connect timed out"),
+async fn recover_dead_adapter(adapter: &mut btleplug::platform::Adapter) {
+    if ble::adapter_alive(adapter).await {
+        return;
+    }
+    tracing::warn!("Bluetooth adapter stopped responding — rebuilding it");
+    match ble::get_adapter().await {
+        Ok(fresh) => {
+            *adapter = fresh;
+            info!("Rebuilt Bluetooth adapter");
+        }
+        Err(e) => tracing::error!(error = %e, "Failed to rebuild Bluetooth adapter"),
     }
 }
 
@@ -509,7 +526,7 @@ async fn walk(
     let auto_stop_duration = auto_stop_minutes.map(|m| Duration::from_secs(m as u64 * 60));
 
     let registry = default_registry();
-    let adapter = ble::get_adapter().await?;
+    let mut adapter = ble::get_adapter().await?;
 
     // Set up server reporter.
     let mut server_reporter = if offline {
@@ -554,6 +571,7 @@ async fn walk(
                 }
                 Err(e) => {
                     error!(error = %e, "BLE scan failed, retrying in 3 seconds...");
+                    recover_dead_adapter(&mut adapter).await;
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 }
             }
@@ -569,8 +587,11 @@ async fn walk(
             "Found walking machine, connecting..."
         );
 
-        if let Err(e) = connect_bounded(&device).await {
+        if let Err(e) = device.connect_with_timeout(CONNECT_TIMEOUT).await {
             error!(error = %e, "Failed to connect, retrying in 3 seconds...");
+            // A connect failure is the first symptom of a dead backend event
+            // loop, so this is where the corpse gets noticed.
+            recover_dead_adapter(&mut adapter).await;
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             continue;
         }
