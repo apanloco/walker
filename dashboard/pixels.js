@@ -26,7 +26,7 @@ function pixelSvg(width, height, body) {
 // Ascending by kcal, Swedish portion sizes. Each food is a milestone: on the trail, in the heatmap
 // tooltip and in "You Burned", a total shows the biggest food it has reached.
 const FOODS = [
-  { name: 'Ahlgrens bil', kcal: 10,
+  { name: 'Ahlgrens bil', kcal: 4,
     palette: { o: '#5a2a3a', p: '#ff7aa8', w: '#fff6f0', g: '#5cc85c' },
     rows: [
       '................',
