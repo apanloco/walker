@@ -287,9 +287,154 @@ function fetchLeaderboard() {
       renderLeaderboard('lb-weekly', data.weekly);
       renderLeaderboard('lb-alltime', data.all_time);
       renderDailyWinners(data.daily_winners);
-      if (window.twemoji) twemoji.parse(document.getElementById('page-leaderboard'));
+      updateTrail(data.today);
     })
     .catch(e => console.error('Failed to fetch leaderboard:', e));
+}
+
+// -- Food trail: today's walkers walk past the food ladder --
+
+// The track ends just past the next food ahead of the leader, so it zooms out
+// as the day goes on. Positions are re-estimated every second from kcal/h so
+// walkers move between polls; CSS transitions smooth each step.
+const TRAIL_PAD = 3;
+const TRAIL_MIN_FOOD_GAP = 7;
+const TRAIL_TICK_MS = 1000;
+const TRAIL_MAX_EXTRAPOLATE_MS = 15000;
+let trailEntries = [];
+let trailFetchedAt = 0;
+const trailLastKcal = new Map();
+
+function userSeed(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 17 + id.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+
+function buildTrailLane(e) {
+  const lane = document.createElement('div');
+  lane.dataset.id = e.id;
+  lane.className = 'flex items-center h-16';
+  let avatar = '<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 shrink-0">' + esc(e.name[0].toUpperCase()) + '</div>';
+  if (e.avatar_url) avatar = '<img class="w-6 h-6 rounded-full ring-2 ring-gray-700 shrink-0" src="' + esc(e.avatar_url) + '" alt="">';
+  lane.innerHTML =
+    '<div class="trail-label shrink-0 flex items-center gap-2 pr-3 min-w-0">' + avatar +
+      '<div class="min-w-0">' +
+        '<a href="/profile/' + e.id + '" class="block text-sm text-gray-200 hover:text-white truncate">' + esc(e.name) + '</a>' +
+        '<div class="trail-kcal text-xs text-gray-500"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="trail-track relative flex-1 h-full">' +
+      '<div class="absolute left-0 right-0 bottom-1 h-0.5 bg-gray-700"></div>' +
+      '<div class="trail-progress absolute left-0 bottom-1 h-0.5" style="background:' + userColor(e.id) + '"></div>' +
+      '<div class="trail-sprite absolute bottom-1"></div>' +
+    '</div>';
+  lane.querySelector('.trail-sprite').style.backgroundImage = walkerSheet(userColor(e.id), userSeed(e.id));
+  return lane;
+}
+
+function updateTrail(entries) {
+  trailEntries = entries || [];
+  trailFetchedAt = Date.now();
+  const el = document.getElementById('trail');
+  if (trailEntries.length === 0) {
+    el.innerHTML = '<div class="text-gray-600 text-sm italic">Nobody has walked yet today</div>';
+    trailLastKcal.clear();
+    return;
+  }
+  let lanes = document.getElementById('trail-lanes');
+  if (!lanes) {
+    el.innerHTML =
+      '<div class="relative">' +
+        '<div id="trail-foods" class="trail-foods absolute top-0 bottom-0 right-0 overflow-hidden pointer-events-none"></div>' +
+        '<div class="h-16"></div>' +
+        '<div id="trail-lanes"></div>' +
+      '</div>';
+    document.getElementById('trail-foods').innerHTML = FOODS.map((f, i) =>
+      '<div id="trail-food-' + i + '" class="trail-food absolute top-0 bottom-0 flex flex-col items-center" style="left:110%">' +
+        '<span class="trail-food-icon pointer-events-auto">' + foodIcon(f, 40) + '</span>' +
+        '<span class="text-[10px] text-gray-500 leading-tight">' + f.kcal + '</span>' +
+        '<div class="flex-1 border-l border-dashed border-gray-700"></div>' +
+      '</div>'
+    ).join('');
+    lanes = document.getElementById('trail-lanes');
+  }
+
+  const ids = new Set(trailEntries.map(e => e.id));
+  for (const lane of [...lanes.children]) {
+    if (!ids.has(lane.dataset.id)) lane.remove();
+  }
+  trailEntries.forEach((e, i) => {
+    let lane = lanes.querySelector('[data-id="' + e.id + '"]');
+    if (!lane) lane = buildTrailLane(e);
+    if (lanes.children[i] !== lane) lanes.insertBefore(lane, lanes.children[i] || null);
+    const sprite = lane.querySelector('.trail-sprite');
+    sprite.classList.toggle('walking', e.status === 'walking');
+    sprite.classList.toggle('idle', e.status !== 'walking');
+    sprite.classList.toggle('offline', e.status === 'offline');
+    if (e.status === 'walking') sprite.style.animationDuration = (2.8 / Math.max(e.speed_kmh, 1)).toFixed(2) + 's';
+    else sprite.style.animationDuration = '';
+  });
+  renderTrail();
+}
+
+function renderTrail() {
+  const lanes = document.getElementById('trail-lanes');
+  if (!lanes) return;
+  const elapsedH = Math.min(Date.now() - trailFetchedAt, TRAIL_MAX_EXTRAPOLATE_MS) / 3600000;
+  const kcals = new Map();
+  for (const e of trailEntries) {
+    let k = e.active_calories_kcal;
+    if (e.status === 'walking') k += e.active_kcal_per_h * elapsedH;
+    kcals.set(e.id, k);
+  }
+  const leader = Math.max(...kcals.values());
+  const next = FOODS.find(f => f.kcal > leader);
+  let max = leader * 1.1;
+  if (next) max = next.kcal * 1.1;
+  const pos = k => TRAIL_PAD + (100 - 2 * TRAIL_PAD) * k / max;
+
+  // Walk the ladder from the top so crowded small foods give way to big ones.
+  let lastShown = Infinity;
+  for (let i = FOODS.length - 1; i >= 0; i--) {
+    const f = FOODS[i];
+    const x = pos(f.kcal);
+    const shown = f.kcal <= max && lastShown - x >= TRAIL_MIN_FOOD_GAP;
+    if (shown) lastShown = x;
+    const el = document.getElementById('trail-food-' + i);
+    el.style.left = x + '%';
+    el.classList.toggle('opacity-0', !shown);
+    el.classList.toggle('ahead', f.kcal > leader);
+  }
+
+  for (const e of trailEntries) {
+    const k = kcals.get(e.id);
+    const lane = lanes.querySelector('[data-id="' + e.id + '"]');
+    lane.querySelector('.trail-sprite').style.left = pos(k) + '%';
+    lane.querySelector('.trail-progress').style.width = pos(k) + '%';
+    lane.querySelector('.trail-kcal').textContent = k.toFixed(1) + ' kcal';
+    const prev = trailLastKcal.get(e.id);
+    if (prev !== undefined) {
+      FOODS.forEach((f, i) => {
+        if (prev < f.kcal && f.kcal <= k) trailPop(i, lane, f, pos(k));
+      });
+    }
+    trailLastKcal.set(e.id, k);
+  }
+}
+
+// A food was just reached: bounce it and float it up from the walker.
+function trailPop(i, lane, f, x) {
+  const icon = document.querySelector('#trail-food-' + i + ' .trail-food-icon');
+  icon.classList.remove('trail-pop');
+  void icon.offsetWidth;
+  icon.classList.add('trail-pop');
+  const float = document.createElement('div');
+  float.className = 'trail-float absolute pointer-events-none';
+  float.style.left = x + '%';
+  float.innerHTML = foodIcon(f, 24);
+  lane.querySelector('.trail-track').appendChild(float);
+  setTimeout(() => float.remove(), 1600);
 }
 
 // -- Day chart (cumulative kcal over time, per user) --
@@ -1275,7 +1420,7 @@ function buildHeatmap(days) {
         return;
       }
       const data = dataMap[cell.dateStr];
-      const food = data ? buildFoodEquiv(data.active_calories_kcal, false) : '';
+      const food = data && foodFor(data.active_calories_kcal);
       const tooltipLines = cell.tooltip.replace(': ', '<br>').replace(', ', '<br>');
       const showBelow = row < 3;
       const posY = showBelow ? 'top-full mt-2' : 'bottom-full mb-2';
@@ -1292,7 +1437,7 @@ function buildHeatmap(days) {
       html += '<' + tag + href + ' class="relative group rounded-sm ' + cell.color + (isClickable ? ' hover:ring-1 hover:ring-walker-500' : '') + '" style="grid-column:' + (col+2) + '; grid-row:' + (row+1) + '">';
       html += '<div class="absolute ' + posY + ' ' + posX + ' hidden group-hover:block bg-gray-900 border border-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none">';
       html += tooltipLines;
-      if (food) html += '<div class="mt-1 text-base flex flex-wrap" style="max-width: 180px;">' + food + '</div>';
+      if (food) html += '<div class="mt-2 flex items-center gap-2">' + foodIcon(food, 32) + '<span class="text-gray-300">' + food.name + '</span></div>';
       html += '</div>';
       html += '</' + tag + '>';
     });
@@ -1315,49 +1460,17 @@ function buildHeatmap(days) {
   return html;
 }
 
-// Sorted largest to smallest — greedy "coin change" algorithm.
-// Capped at Coca-Cola size so you see more emojis = more accomplishment.
-const foodItems = [
-  { emoji: '🥤', name: 'Coca-Cola 33cl', kcal: 139 },
-  { emoji: '🍪', name: 'Oreo cookie', kcal: 53 },
-  { emoji: '🍬', name: 'Marshmallow', kcal: 23 },
-  { emoji: '🍭', name: 'Lollipop', kcal: 11 },
-];
-
-function buildFoodEquiv(kcal, compact) {
-  if (kcal <= 0) return '';
-  let remaining = kcal;
-  let html = '';
-  const maxPerItem = compact ? 5 : 30;
-
-  for (const f of foodItems) {
-    const count = Math.floor(remaining / f.kcal);
-    if (count > 0) {
-      remaining -= count * f.kcal;
-      if (count <= maxPerItem) {
-        for (let i = 0; i < count; i++) {
-          html += '<span class="cursor-default inline-block hover:scale-125 transition-transform" title="' + f.name + ' (' + f.kcal + ' kcal)">' + f.emoji + '</span>';
-        }
-      } else {
-        html += '<span class="cursor-default inline-block" title="' + count + '× ' + f.name + ' (' + f.kcal + ' kcal each)">';
-        html += '<span class="text-xl">' + f.emoji + '</span>';
-        html += '<span class="text-xs text-gray-400 ml-0.5">×' + count + '</span>';
-        html += '</span> ';
-      }
-    }
-  }
-  return html;
-}
-
 function buildFoodRow(label, kcal) {
   if (kcal <= 0) return '';
-  const equiv = buildFoodEquiv(kcal, kcal > 2000);
+  const food = foodFor(kcal);
+  let reached = '<span class="text-sm text-gray-600 italic">Not even a lollipop yet</span>';
+  if (food) reached = foodIcon(food, 32) + '<span class="text-sm text-gray-300">' + food.name + '</span>';
   return '<div class="py-3 border-t border-gray-800/50">' +
     '<div class="flex items-center justify-between mb-1">' +
       '<div class="text-xs text-gray-500">' + label + '</div>' +
       '<div class="text-xs text-gray-600">' + kcal.toFixed(0) + ' kcal</div>' +
     '</div>' +
-    '<div class="text-xl leading-relaxed flex flex-wrap">' + equiv + '</div>' +
+    '<div class="flex items-center gap-3">' + reached + '</div>' +
   '</div>';
 }
 
@@ -1805,4 +1918,5 @@ if (currentPage === 'leaderboard') {
   fetchLeaderboard();
   fetchDay();
   setInterval(fetchLeaderboard, LEADERBOARD_POLL_INTERVAL_MS);
+  setInterval(renderTrail, TRAIL_TICK_MS);
 }

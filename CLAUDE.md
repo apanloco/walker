@@ -61,7 +61,8 @@ src/
     profile.rs     — GET /api/profile/{id} with year history, records, periods
 dashboard/
   index.html       — Tailwind CSS (CDN) + theme system (CSS variables), nav, leaderboard, profile, history pages
-  app.js           — leaderboard, profile with heatmap, history timeline, WebSocket, theme switcher
+  app.js           — leaderboard, food trail, profile with heatmap, history timeline, WebSocket, theme switcher
+  pixels.js        — pixel-art database: food ladder + walker sprite, rendered to SVG
 migrations/
   001_initial.sql       — users, tokens, segments tables
   002_calorie_functions — initial calorie functions (superseded by 007)
@@ -270,6 +271,7 @@ All timing constants in one place. Referenced throughout this doc.
 | False idle reopen window | 20s | update.rs | Previous walking segment must be this recent to reopen |
 | Session gap | 60 min | app.js | Gap between segments that creates a new session |
 | Dashboard leaderboard poll | 5s | app.js | Client-side polling interval for leaderboard |
+| Food trail tick | 1s | app.js | Walkers' positions re-estimated from kcal/h between polls (extrapolation capped at 15s) |
 | Token expiry | 180 days | db.rs | Bearer tokens expire after this |
 | Update rate limit | 10 req/s, burst 20 | update.rs | Per-token rate limit on authenticated endpoints |
 | Auto-stop default | 10 min | main.rs | `--auto-stop` without value: minutes of idle before sending stop |
@@ -359,7 +361,7 @@ Single-page app served by the walker server. Files in `dashboard/` directory:
 - **Production:** embedded via `include_str!` (single binary)
 - **Dev mode (`--dev`):** served from disk (edit, save, refresh — no rebuild)
 
-**Tech stack:** Tailwind CSS (CDN), Twemoji (consistent emoji rendering), Google Fonts (Pixelify Sans, Inter)
+**Tech stack:** Tailwind CSS (CDN), Twemoji (consistent rendering of the few remaining profile emoji, e.g. 🏆 🔥), Google Fonts (Pixelify Sans, Inter). Food and walker art is our own pixel art in `pixels.js`, not a font.
 
 **Theming:** Three themes selectable via avatar dropdown menu. Choice persisted in `walker_theme` cookie (1 year, client-side only, no database). Default: Gruvbox.
 
@@ -392,6 +394,7 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 - Live status: walking users show `X.X km/h | Y.Y kcal/h | N.N% incline` (or `| no incline` when null or zero). Idle users show `Idle` (plus `| N.N% incline` when nonzero). Themed walking/idle dots with theme-appropriate animation; pipes are muted gray.
 - Clickable names → profile page (redirects to leaderboard if not logged in)
 - Polls server on the dashboard leaderboard poll interval + refetches on `/ws/live` notifications
+- **Food Trail** (full-width, between the four panels and the chart): see [Food Ladder](#food-ladder). One lane per user in today's leaderboard (same order). Each user is a pixel-art walker standing at their today kcal, with a line in their chart color behind them. Food icons sit above the lanes at their kcal value with dashed guides down through the lanes. Walk cycle plays while `walking` (faster at higher speed), idle animation (breathe + blink) otherwise, faded when `offline`. Scale: the track ends at 110% of the next food the leader hasn't reached, so it zooms out as the day goes on. Foods closer than 7% of the track to a bigger shown food are hidden; foods nobody has reached yet are greyed out. Between polls each walker's kcal is extrapolated from `active_kcal_per_h` every second (capped at 15s since the last fetch) and CSS transitions smooth the motion. When a walker reaches a food, the food bounces and a copy floats up from the walker. Data is `today` from `/api/leaderboard` — no extra endpoint.
 - **Chart** (full-width, below the four panels): three time ranges selectable via a segmented pill control (Day / Week / All Time, default Day). Each user gets a stable color derived from a hash of their UUID. Vertical orange dashed "now" indicator on today / current week / current period. Hover shows a crosshair + tooltip ranked by kcal. Small axis unit label at bottom-right ("hours (UTC)", "days", "weeks", "months"). Legend shows user color + name + total kcal for the viewed period.
   - **Day**: cumulative active kcal per user across the UTC day. X axis 00:00–24:00 in the viewer's local timezone (computed client-side via `TZ_OFFSET_SECS`; the underlying data domain is still the UTC day), Y axis kcal. Hover interpolates continuously along each user's curve. Navigation: ←, →, ⟲ Today; disabled when already on today. Refetched on `/ws/live` only when viewing today. Data from `/api/day/{date}`.
   - **Week**: daily total kcal per user for the last 7 days ending today (rolling window, not Mon–Sun). X axis = day name labels derived from actual dates, Y axis kcal. Today's column highlighted. Dots at non-zero points, lines connecting all 7 days. Hover snaps to nearest day. Navigation: ←, →, ⟲ Last 7 Days; disabled when on current window. Refetched on `/ws/live` notifications when viewing the current window. Data from `/api/alltime?from={start}&to={end}` (single request; counts only closed segments, so today's active open segment is not included until it closes).
@@ -400,10 +403,10 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 **Profile page** (login required):
 - Hero: avatar, name, streak, live walking badge
 - Last 7 days: horizontal bar chart with live indicator (blinking dot next to today when walking/idle). Bars show "active kcal" label. Refetched on `/ws/live` notifications so bars update live while walking.
-- GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → history page for that date
+- GitHub-style daily heatmap: full year, themed intensity + gold for 8+ km days, clickable cells → history page for that date. Hover tooltip shows date, kcal, km and the single biggest food reached that day
 - Stats grid: active kcal, km, active time, active days
 - Personal records: best day for calories, distance, time
-- "You Burned" section: food emoji equivalents (greedy coin-change algorithm)
+- "You Burned" section: for Today / This Week / This Month / This Year / All Time, the single biggest food reached (icon + name)
 
 **FAQ page** (public — no login required):
 - Static Q&A explaining how Walker works (how calories are calculated, segments, steps, privacy, etc.)
@@ -430,6 +433,12 @@ Theme-specific CSS handles: font-family, border-radius overrides, animations (pi
 **URL routing:** Full page navigation with real URLs (`/`, `/profile/<id>`, `/history/<id>`). No client-side routing — all navigation uses `<a href>` links and full page loads. Server catch-all serves `index.html` for all non-API paths. `initPage()` reads `location.pathname` once on load, returns the page name, and shows the right content. Legacy `#hash` URLs redirect automatically.
 
 **Constraint:** because `app.js` runs on every page, anything at module top level runs on every page. New page-specific fetches, polls, or `setInterval`s must be gated by `currentPage === '<name>'` (or an equivalent signal) — otherwise they'll fire on pages that can't see the result. Reconsider this design if page count grows past ~8, a page needs heavy page-specific JS, or first-paint becomes a complaint.
+
+### Food Ladder
+
+Food is how Walker shows progress. `FOODS` in `dashboard/pixels.js` is an ascending ladder of foods with their kcal, from a lollipop (11 kcal) through a Coca-Cola (139), a Big Mac (550) and a birthday cake (3,000) up to a vending machine (60,000). The ladder reaches that high so a single icon can represent any total, from one walk to all time. `foodFor(kcal)` returns the biggest food at or below a total (or none below the lollipop). Everywhere food appears — the trail, the heatmap tooltip, "You Burned" — it shows that one food rather than a pile of equivalents.
+
+**Pixel art, not a font.** Every food, and the walker sprite, is a grid of characters plus a palette (`.` is transparent), rendered to inline SVG with `shape-rendering="crispEdges"`. Foods are 16×16. Adding or redrawing an icon is a text edit in `pixels.js`; no image files, no emoji font. The walker is a 12×17 sprite sheet of 6 frames (4-frame walk cycle, 2-frame idle) composed from head/torso/legs parts, used as a CSS background animated with `steps()`. Shirt is the user's chart color; hair and skin are picked from a hash of the user id.
 
 ### Database (PostgreSQL)
 
