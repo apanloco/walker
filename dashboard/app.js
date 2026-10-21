@@ -1463,7 +1463,7 @@ function buildHeatmap(days) {
 function buildFoodRow(label, kcal) {
   if (kcal <= 0) return '';
   const food = foodFor(kcal);
-  let reached = '<span class="text-sm text-gray-600 italic">Not even a ' + FOODS[0].name.toLowerCase() + ' yet</span>';
+  let reached = '<span class="text-sm text-gray-600 italic">Not even one ' + FOODS[0].name + ' yet</span>';
   if (food) reached = foodIcon(food, 32) + '<span class="text-sm text-gray-300">' + food.name + '</span>';
   return '<div class="py-3 border-t border-gray-800/50">' +
     '<div class="flex items-center justify-between mb-1">' +
