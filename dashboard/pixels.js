@@ -23,29 +23,9 @@ function pixelSvg(width, height, body) {
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" shape-rendering="crispEdges">' + body + '</svg>';
 }
 
-// Ascending by kcal. Each food is a milestone: on the trail, in the heatmap
+// Ascending by kcal, Swedish portion sizes. Each food is a milestone: on the trail, in the heatmap
 // tooltip and in "You Burned", a total shows the biggest food it has reached.
 const FOODS = [
-  { name: 'Lollipop', kcal: 11,
-    palette: { o: '#5a1f2a', r: '#e84a5f', w: '#fff3e0', s: '#e8dcc0' },
-    rows: [
-      '................',
-      '.....oooooo.....',
-      '....orrwwrro....',
-      '...orwwrrwwro...',
-      '...owrrwwrrwo...',
-      '...orrwrrwrro...',
-      '...owwrwwrwwo...',
-      '...orwrrrrwro...',
-      '....orwwwwro....',
-      '.....oooooo.....',
-      '.......ss.......',
-      '.......ss.......',
-      '.......ss.......',
-      '.......ss.......',
-      '.......ss.......',
-      '................',
-    ] },
   { name: 'Marshmallow', kcal: 23,
     palette: { o: '#6b4a55', w: '#ffffff', v: '#ffd6e0', s: '#e8a8bb' },
     rows: [
@@ -64,6 +44,26 @@ const FOODS = [
       '...osssssssso...',
       '....oooooooo....',
       '................',
+      '................',
+    ] },
+  { name: 'Lollipop', kcal: 47,
+    palette: { o: '#5a1f2a', r: '#e84a5f', w: '#fff3e0', s: '#e8dcc0' },
+    rows: [
+      '................',
+      '.....oooooo.....',
+      '....orrwwrro....',
+      '...orwwrrwwro...',
+      '...owrrwwrrwo...',
+      '...orrwrrwrro...',
+      '...owwrwwrwwo...',
+      '...orwrrrrwro...',
+      '....orwwwwro....',
+      '.....oooooo.....',
+      '.......ss.......',
+      '.......ss.......',
+      '.......ss.......',
+      '.......ss.......',
+      '.......ss.......',
       '................',
     ] },
   { name: 'Oreo cookie', kcal: 53,
@@ -86,7 +86,7 @@ const FOODS = [
       '................',
       '................',
     ] },
-  { name: 'Apple', kcal: 95,
+  { name: 'Apple', kcal: 75,
     palette: { o: '#4a0d16', r: '#d7263d', w: '#ff8a8a', d: '#9e1b2c', s: '#5b3a1e', g: '#5cb85c' },
     rows: [
       '................',
@@ -166,7 +166,7 @@ const FOODS = [
       '..ooooooooooooo.',
       '................',
     ] },
-  { name: 'Hot dog', kcal: 290,
+  { name: 'Korv med bröd', kcal: 280,
     palette: { o: '#4a2511', b: '#e8b46a', d: '#c48a3f', s: '#c0392b', y: '#f4d03f' },
     rows: [
       '................',
@@ -186,7 +186,7 @@ const FOODS = [
       '................',
       '................',
     ] },
-  { name: 'Medium fries', kcal: 320,
+  { name: 'Medium fries', kcal: 330,
     palette: { o: '#4a0a0a', y: '#ffd23f', f: '#e0a800', r: '#d62828', w: '#ffd23f' },
     rows: [
       '................',
@@ -206,7 +206,7 @@ const FOODS = [
       '................',
       '................',
     ] },
-  { name: 'Big Mac', kcal: 550,
+  { name: 'Big Mac', kcal: 505,
     palette: { o: '#3d2010', b: '#e09f3e', w: '#fff8e7', g: '#5cb85c', c: '#ffcc33', m: '#6b3e26' },
     rows: [
       '................',
@@ -226,7 +226,7 @@ const FOODS = [
       '................',
       '................',
     ] },
-  { name: 'Spaghetti bolognese', kcal: 700,
+  { name: 'Spaghetti bolognese', kcal: 650,
     palette: { o: '#7a8a96', p: '#e8eef2', y: '#f2d16b', l: '#d9b440', r: '#b5302a', d: '#7a1d18', g: '#5cb85c' },
     rows: [
       '................',
@@ -246,7 +246,7 @@ const FOODS = [
       '................',
       '................',
     ] },
-  { name: 'Big Mac meal', kcal: 1040,
+  { name: 'Big Mac meal', kcal: 1000,
     palette: { o: '#3a0a0a', r: '#d62828', w: '#ffffff', y: '#ffd23f', f: '#e0a800', b: '#e09f3e', g: '#5cb85c', m: '#6b3e26', t: '#8b5a2b', d: '#5e3a17' },
     rows: [
       '................',
@@ -266,7 +266,7 @@ const FOODS = [
       'dddddddddddddddd',
       '................',
     ] },
-  { name: 'Big Mac Plus meal', kcal: 1200,
+  { name: 'Big Mac Plus meal', kcal: 1150,
     palette: { o: '#3a0a0a', r: '#d62828', w: '#ffffff', y: '#ffd23f', f: '#e0a800', b: '#e09f3e', g: '#5cb85c', m: '#6b3e26', t: '#8b5a2b', d: '#5e3a17' },
     rows: [
       '..w.............',
@@ -286,7 +286,7 @@ const FOODS = [
       'dddddddddddddddd',
       '................',
     ] },
-  { name: 'Whole pizza', kcal: 1400,
+  { name: 'Pizzeria pizza', kcal: 1300,
     palette: { o: '#5a2e0e', k: '#d9953f', c: '#ffd966', p: '#c0392b' },
     rows: [
       '................',
@@ -306,7 +306,7 @@ const FOODS = [
       '...ookkkkkkoo...',
       '.....oooooo.....',
     ] },
-  { name: 'Roast chicken', kcal: 1600,
+  { name: 'Grillad kyckling', kcal: 1700,
     palette: { o: '#3d1f08', b: '#b8682a', h: '#e09550', d: '#7a4015', w: '#fff6e0', p: '#e8eef2' },
     rows: [
       '................',
