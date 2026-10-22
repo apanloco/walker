@@ -298,7 +298,7 @@ function fetchLeaderboard() {
 // as the day goes on. Positions are re-estimated every second from kcal/h so
 // walkers move between polls; CSS transitions smooth each step.
 const TRAIL_PAD = 3;
-const TRAIL_MIN_FOOD_GAP = 7;
+const TRAIL_MIN_FOOD_GAP_PX = 48;
 const TRAIL_TICK_MS = 1000;
 const TRAIL_MAX_EXTRAPOLATE_MS = 15000;
 let trailEntries = [];
@@ -395,11 +395,12 @@ function renderTrail() {
   const pos = k => TRAIL_PAD + (100 - 2 * TRAIL_PAD) * k / max;
 
   // Walk the ladder from the top so crowded small foods give way to big ones.
+  const minGap = TRAIL_MIN_FOOD_GAP_PX / document.getElementById('trail-foods').clientWidth * 100;
   let lastShown = Infinity;
   for (let i = FOODS.length - 1; i >= 0; i--) {
     const f = FOODS[i];
     const x = pos(f.kcal);
-    const shown = f.kcal <= max && lastShown - x >= TRAIL_MIN_FOOD_GAP;
+    const shown = f.kcal <= max && lastShown - x >= minGap;
     if (shown) lastShown = x;
     const el = document.getElementById('trail-food-' + i);
     el.style.left = x + '%';
