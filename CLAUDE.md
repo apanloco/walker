@@ -337,6 +337,8 @@ The endpoint returns *what was true at query time* — for an open segment, `dur
 ```
 Used by the leaderboard chart's Week and All Time views. Week passes `?from=&to=` for the 7-day window; All Time omits the params. The client groups entries into ISO weeks or calendar months and renders them as a discrete line chart.
 
+**`GET /api/version`** — public, plain text. Short (7-char) commit SHA of the running deploy, from the `RENDER_GIT_COMMIT` env var Render sets at runtime; `unknown` when unset (e.g. local dev). Shown as a tiny muted footer (`walker <sha>`, linking to the commit on GitHub) on every page.
+
 **`GET /api/leaderboard`** — sums segments, merges with live status:
 ```json
 {

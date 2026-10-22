@@ -1911,6 +1911,15 @@ function connect() {
 // -- Init --
 const currentPage = initPage();
 
+fetch('/api/version')
+  .then(r => r.text())
+  .then(v => {
+    const el = document.getElementById('version');
+    el.textContent = 'walker ' + v;
+    if (v !== 'unknown') el.href = 'https://github.com/apanloco/walker/commit/' + v;
+  })
+  .catch(e => console.error('Failed to fetch version:', e));
+
 connect();
 
 // Leaderboard and day chart are leaderboard-page-only. Other pages don't fetch or
