@@ -668,8 +668,22 @@ const FOODS = [
     ] },
 ];
 
+// artLeft/artRight: how far the drawing reaches left/right of the icon's
+// centre, in pixel-grid units. The trail uses them to pack narrow foods closer.
 FOODS.forEach(f => {
   f.svg = pixelSvg(16, 16, pixelRects(f.rows, f.palette, 0, 0));
+  let min = 16;
+  let max = -1;
+  f.rows.forEach(r => {
+    for (let i = 0; i < r.length; i++) {
+      if (r[i] !== '.') {
+        min = Math.min(min, i);
+        max = Math.max(max, i);
+      }
+    }
+  });
+  f.artLeft = 8 - min;
+  f.artRight = max + 1 - 8;
 });
 
 // The biggest food reached by `kcal`, or null below the smallest.

@@ -298,12 +298,14 @@ function fetchLeaderboard() {
 // as the day goes on. Positions are re-estimated every second from kcal/h so
 // walkers move between polls; CSS transitions smooth each step.
 const TRAIL_PAD = 3;
-const TRAIL_MIN_FOOD_GAP_PX = 48;
+const TRAIL_ICON_PX = 40;
+const TRAIL_FOOD_MARGIN_PX = 4;
 const TRAIL_TICK_MS = 1000;
 const TRAIL_MAX_EXTRAPOLATE_MS = 15000;
 let trailEntries = [];
 let trailFetchedAt = 0;
 const trailLastKcal = new Map();
+let trailFoodExtents = []; // px each food (art or kcal label, whichever is wider) reaches left/right of its centre
 
 function userSeed(id) {
   let h = 0;
@@ -352,12 +354,17 @@ function updateTrail(entries) {
       '</div>';
     document.getElementById('trail-foods').innerHTML = FOODS.map((f, i) =>
       '<div id="trail-food-' + i + '" class="trail-food absolute top-0 bottom-0 flex flex-col items-center" style="left:110%">' +
-        '<span class="trail-food-icon pointer-events-auto">' + foodIcon(f, 40) + '</span>' +
-        '<span class="text-[10px] text-gray-500 leading-tight">' + f.kcal + '</span>' +
+        '<span class="trail-food-icon pointer-events-auto">' + foodIcon(f, TRAIL_ICON_PX) + '</span>' +
+        '<span class="trail-food-kcal text-[10px] text-gray-500 leading-tight">' + f.kcal + '</span>' +
         '<div class="flex-1 border-l border-dashed border-gray-700"></div>' +
       '</div>'
     ).join('');
     lanes = document.getElementById('trail-lanes');
+    const unit = TRAIL_ICON_PX / 16;
+    trailFoodExtents = FOODS.map((f, i) => {
+      const label = document.querySelector('#trail-food-' + i + ' .trail-food-kcal').offsetWidth / 2;
+      return { left: Math.max(f.artLeft * unit, label), right: Math.max(f.artRight * unit, label) };
+    });
   }
 
   const ids = new Set(trailEntries.map(e => e.id));
@@ -395,13 +402,19 @@ function renderTrail() {
   const pos = k => TRAIL_PAD + (100 - 2 * TRAIL_PAD) * k / max;
 
   // Walk the ladder from the top so crowded small foods give way to big ones.
-  const minGap = TRAIL_MIN_FOOD_GAP_PX / document.getElementById('trail-foods').clientWidth * 100;
-  let lastShown = Infinity;
+  const width = document.getElementById('trail-foods').clientWidth;
+  let lastShownPx = Infinity;
+  let lastShownLeft = 0;
   for (let i = FOODS.length - 1; i >= 0; i--) {
     const f = FOODS[i];
     const x = pos(f.kcal);
-    const shown = f.kcal <= max && lastShown - x >= minGap;
-    if (shown) lastShown = x;
+    const px = x * width / 100;
+    const ext = trailFoodExtents[i];
+    const shown = f.kcal <= max && lastShownPx - px >= ext.right + lastShownLeft + TRAIL_FOOD_MARGIN_PX;
+    if (shown) {
+      lastShownPx = px;
+      lastShownLeft = ext.left;
+    }
     const el = document.getElementById('trail-food-' + i);
     el.style.left = x + '%';
     el.classList.toggle('opacity-0', !shown);
