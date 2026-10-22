@@ -397,11 +397,13 @@ function renderTrail() {
   }
   const leader = Math.max(...kcals.values());
   const next = FOODS.find(f => f.kcal > leader);
-  let max = leader * 1.1;
-  if (next) max = next.kcal * 1.1;
+  let goal = leader;
+  if (next) goal = next.kcal;
+  const max = goal * 1.1;
   const pos = k => TRAIL_PAD + (100 - 2 * TRAIL_PAD) * k / max;
 
-  // Walk the ladder from the top so crowded small foods give way to big ones.
+  // Walk the ladder down from the leader's next goal, so the goal is always
+  // shown and crowded smaller foods give way to bigger ones.
   const width = document.getElementById('trail-foods').clientWidth;
   let lastShownPx = Infinity;
   let lastShownLeft = 0;
@@ -410,7 +412,7 @@ function renderTrail() {
     const x = pos(f.kcal);
     const px = x * width / 100;
     const ext = trailFoodExtents[i];
-    const shown = f.kcal <= max && lastShownPx - px >= ext.right + lastShownLeft + TRAIL_FOOD_MARGIN_PX;
+    const shown = f.kcal <= goal && lastShownPx - px >= ext.right + lastShownLeft + TRAIL_FOOD_MARGIN_PX;
     if (shown) {
       lastShownPx = px;
       lastShownLeft = ext.left;
